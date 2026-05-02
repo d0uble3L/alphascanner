@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 from .db import init_db
 from .scanner import FilterParams, scan
@@ -15,18 +15,24 @@ TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 _SortBy = Literal["volume_surge", "pct_change_1h", "pct_change_24h", "pct_change_7d", "volume", "market_cap"]
 
+_NoneIfEmpty = BeforeValidator(lambda v: None if v == "" else v)
+# ge/le constraints live inside the float branch so None bypasses them
+_OptFloat = Annotated[float | None, _NoneIfEmpty]
+_OptFloatPos = Annotated[Annotated[float, Field(ge=0)] | None, _NoneIfEmpty]
+_OptAthPct = Annotated[Annotated[float, Field(ge=0.0, le=1.0)] | None, _NoneIfEmpty]
+
 
 class ScreenQuery(BaseModel):
     sort_by: _SortBy = "volume_surge"
     limit: Annotated[int, Field(ge=1, le=200)] = 20
-    min_market_cap: Annotated[float | None, Field(None, ge=0)] = None
-    max_market_cap: Annotated[float | None, Field(None, ge=0)] = None
-    min_volume: Annotated[float | None, Field(None, ge=0)] = None
-    min_pct_change_1h: float | None = None
-    min_pct_change_24h: float | None = None
-    min_pct_change_7d: float | None = None
-    min_volume_surge: Annotated[float | None, Field(None, ge=0)] = None
-    near_ath_pct: Annotated[float | None, Field(None, ge=0.0, le=1.0)] = None
+    min_market_cap: _OptFloatPos = None
+    max_market_cap: _OptFloatPos = None
+    min_volume: _OptFloatPos = None
+    min_pct_change_1h: _OptFloat = None
+    min_pct_change_24h: _OptFloat = None
+    min_pct_change_7d: _OptFloat = None
+    min_volume_surge: _OptFloatPos = None
+    near_ath_pct: _OptAthPct = None
 
 
 def _format_number(v, places: int = 2) -> str:
@@ -92,15 +98,15 @@ def _build_params(q: ScreenQuery) -> FilterParams:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return TEMPLATES.TemplateResponse("index.html", {"request": request})
+    return TEMPLATES.TemplateResponse(request, "index.html")
 
 
 @app.get("/screen", response_class=HTMLResponse)
 async def screen_html(request: Request, q: Annotated[ScreenQuery, Depends()]):
     df, fetched_at = scan(_build_params(q))
     return TEMPLATES.TemplateResponse(
-        "table.html",
-        {"request": request, "rows": _rows_for_display(df), "fetched_at": fetched_at},
+        request, "table.html",
+        {"rows": _rows_for_display(df), "fetched_at": fetched_at},
     )
 
 
