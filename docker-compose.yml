@@ -1,0 +1,23 @@
+services:
+  web:
+    build: .
+    image: alphascanner:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    depends_on:
+      - scheduler
+
+  scheduler:
+    build: .
+    image: alphascanner:latest
+    command: ["python", "-m", "alphascanner.scheduler"]
+    volumes:
+      - ./data:/data
+    env_file:
+      - .env
+    restart: unless-stopped

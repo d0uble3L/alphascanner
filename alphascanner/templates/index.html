@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AlphaScanner</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://unpkg.com/htmx.org@2.0.3" integrity="sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" crossorigin="anonymous"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 1.25rem; background: #0a0a0c; color: #e6e6e6; }
+  header { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 1rem; }
+  h1 { color: #5fafff; margin: 0; font-size: 1.5rem; }
+  header .tag { color: #777; font-size: 0.85rem; }
+  form.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; padding: 1rem; background: #15161a; border: 1px solid #23252b; border-radius: 8px; margin-bottom: 1rem; }
+  form.filters label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; color: #9aa; text-transform: uppercase; letter-spacing: 0.04em; }
+  form.filters input, form.filters select { padding: 0.45rem 0.55rem; background: #1c1d22; color: #e6e6e6; border: 1px solid #2a2c33; border-radius: 4px; font-size: 0.9rem; }
+  form.filters input:focus, form.filters select:focus { outline: none; border-color: #5fafff; }
+  #results { background: #15161a; border: 1px solid #23252b; border-radius: 8px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  thead th { padding: 0.6rem 0.75rem; text-align: right; color: #5fafff; background: #181a1f; border-bottom: 1px solid #2a2c33; position: sticky; top: 0; }
+  th:first-child, th:nth-child(2), td:first-child, td:nth-child(2) { text-align: left; }
+  td { padding: 0.5rem 0.75rem; text-align: right; border-bottom: 1px solid #1d1e23; }
+  tr:hover td { background: #1a1c20; }
+  .up { color: #4ade80; }
+  .down { color: #f87171; }
+  .meta { padding: 0.6rem 0.75rem; color: #777; font-size: 0.8rem; border-bottom: 1px solid #23252b; display: flex; justify-content: space-between; }
+  .empty { padding: 2rem; text-align: center; color: #777; }
+  .empty code { background: #1d1e23; padding: 0.15rem 0.4rem; border-radius: 3px; color: #cce; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AlphaScanner</h1>
+  <span class="tag">altcoin opportunity screener</span>
+</header>
+
+<form class="filters"
+      hx-get="/screen"
+      hx-target="#results"
+      hx-trigger="change delay:200ms, submit"
+      hx-include="this">
+  <label>Sort by
+    <select name="sort_by">
+      <option value="volume_surge">Volume surge</option>
+      <option value="pct_change_1h">% change 1h</option>
+      <option value="pct_change_24h">% change 24h</option>
+      <option value="pct_change_7d">% change 7d</option>
+      <option value="volume">Volume</option>
+      <option value="market_cap">Market cap</option>
+    </select>
+  </label>
+  <label>Limit
+    <input type="number" name="limit" value="20" min="1" max="200">
+  </label>
+  <label>Min market cap (USD)
+    <input type="number" name="min_market_cap" placeholder="e.g. 10000000">
+  </label>
+  <label>Max market cap (USD)
+    <input type="number" name="max_market_cap" placeholder="e.g. 1000000000">
+  </label>
+  <label>Min 24h volume (USD)
+    <input type="number" name="min_volume" placeholder="e.g. 1000000">
+  </label>
+  <label>Min volume surge (x)
+    <input type="number" name="min_volume_surge" step="0.1" placeholder="2.0">
+  </label>
+  <label>Min % chg 1h
+    <input type="number" name="min_pct_change_1h" step="0.5">
+  </label>
+  <label>Min % chg 24h
+    <input type="number" name="min_pct_change_24h" step="1">
+  </label>
+  <label>Min % chg 7d
+    <input type="number" name="min_pct_change_7d" step="1">
+  </label>
+  <label>Near ATH (0–1)
+    <input type="number" name="near_ath_pct" step="0.01" min="0" max="1" placeholder="0.95">
+  </label>
+</form>
+
+<div id="results"
+     hx-get="/screen"
+     hx-trigger="load, every 60s"
+     hx-include="form.filters">
+  <div class="empty">Loading…</div>
+</div>
+</body>
+</html>

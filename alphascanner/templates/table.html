@@ -1,0 +1,42 @@
+{% if not rows %}
+<div class="empty">
+  No data yet — run <code>alphascanner fetch</code> or wait for the scheduler to write a snapshot.
+</div>
+{% else %}
+<div class="meta">
+  <span>Snapshot: {{ fetched_at }}</span>
+  <span>{{ rows|length }} result{{ '' if rows|length == 1 else 's' }}</span>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Symbol</th>
+      <th>Name</th>
+      <th>Price</th>
+      <th>1h %</th>
+      <th>24h %</th>
+      <th>7d %</th>
+      <th>Volume</th>
+      <th>Vol surge</th>
+      <th>Mkt cap</th>
+      <th>From ATH %</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.symbol|upper }}</td>
+      <td>{{ r.name }}</td>
+      <td>{{ r.price_fmt }}</td>
+      <td class="{{ 'up' if (r.price_change_pct_1h or 0) > 0 else 'down' if (r.price_change_pct_1h or 0) < 0 else '' }}">{{ r.chg1h_fmt }}</td>
+      <td class="{{ 'up' if (r.price_change_pct_24h or 0) > 0 else 'down' if (r.price_change_pct_24h or 0) < 0 else '' }}">{{ r.chg24h_fmt }}</td>
+      <td class="{{ 'up' if (r.price_change_pct_7d or 0) > 0 else 'down' if (r.price_change_pct_7d or 0) < 0 else '' }}">{{ r.chg7d_fmt }}</td>
+      <td>{{ r.volume_fmt }}</td>
+      <td>{{ r.surge_fmt }}</td>
+      <td>{{ r.mcap_fmt }}</td>
+      <td class="{{ 'up' if (r.ath_change_pct or 0) >= -5 else '' }}">{{ r.ath_fmt }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
