@@ -1,15 +1,32 @@
 import math
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
 from .db import init_db
 from .scanner import FilterParams, scan
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+_SortBy = Literal["volume_surge", "pct_change_1h", "pct_change_24h", "pct_change_7d", "volume", "market_cap"]
+
+
+class ScreenQuery(BaseModel):
+    sort_by: _SortBy = "volume_surge"
+    limit: Annotated[int, Field(ge=1, le=200)] = 20
+    min_market_cap: Annotated[float | None, Field(None, ge=0)] = None
+    max_market_cap: Annotated[float | None, Field(None, ge=0)] = None
+    min_volume: Annotated[float | None, Field(None, ge=0)] = None
+    min_pct_change_1h: float | None = None
+    min_pct_change_24h: float | None = None
+    min_pct_change_7d: float | None = None
+    min_volume_surge: Annotated[float | None, Field(None, ge=0)] = None
+    near_ath_pct: Annotated[float | None, Field(None, ge=0.0, le=1.0)] = None
 
 
 def _format_number(v, places: int = 2) -> str:
@@ -58,29 +75,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AlphaScanner", lifespan=lifespan)
 
 
-def _build_params(
-    sort_by: str,
-    limit: int,
-    min_market_cap: float | None,
-    max_market_cap: float | None,
-    min_volume: float | None,
-    min_pct_change_1h: float | None,
-    min_pct_change_24h: float | None,
-    min_pct_change_7d: float | None,
-    min_volume_surge: float | None,
-    near_ath_pct: float | None,
-) -> FilterParams:
+def _build_params(q: ScreenQuery) -> FilterParams:
     return FilterParams(
-        sort_by=sort_by,
-        limit=limit,
-        min_market_cap=min_market_cap,
-        max_market_cap=max_market_cap,
-        min_volume=min_volume,
-        min_pct_change_1h=min_pct_change_1h,
-        min_pct_change_24h=min_pct_change_24h,
-        min_pct_change_7d=min_pct_change_7d,
-        min_volume_surge=min_volume_surge,
-        near_ath_pct=near_ath_pct,
+        sort_by=q.sort_by,
+        limit=q.limit,
+        min_market_cap=q.min_market_cap,
+        max_market_cap=q.max_market_cap,
+        min_volume=q.min_volume,
+        min_pct_change_1h=q.min_pct_change_1h,
+        min_pct_change_24h=q.min_pct_change_24h,
+        min_pct_change_7d=q.min_pct_change_7d,
+        min_volume_surge=q.min_volume_surge,
+        near_ath_pct=q.near_ath_pct,
     )
 
 
@@ -90,25 +96,8 @@ async def index(request: Request):
 
 
 @app.get("/screen", response_class=HTMLResponse)
-async def screen_html(
-    request: Request,
-    sort_by: str = "volume_surge",
-    limit: int = 20,
-    min_market_cap: float | None = None,
-    max_market_cap: float | None = None,
-    min_volume: float | None = None,
-    min_pct_change_1h: float | None = None,
-    min_pct_change_24h: float | None = None,
-    min_pct_change_7d: float | None = None,
-    min_volume_surge: float | None = None,
-    near_ath_pct: float | None = None,
-):
-    params = _build_params(
-        sort_by, limit, min_market_cap, max_market_cap, min_volume,
-        min_pct_change_1h, min_pct_change_24h, min_pct_change_7d,
-        min_volume_surge, near_ath_pct,
-    )
-    df, fetched_at = scan(params)
+async def screen_html(request: Request, q: Annotated[ScreenQuery, Depends()]):
+    df, fetched_at = scan(_build_params(q))
     return TEMPLATES.TemplateResponse(
         "table.html",
         {"request": request, "rows": _rows_for_display(df), "fetched_at": fetched_at},
@@ -116,24 +105,8 @@ async def screen_html(
 
 
 @app.get("/api/screen")
-async def screen_api(
-    sort_by: str = "volume_surge",
-    limit: int = 20,
-    min_market_cap: float | None = None,
-    max_market_cap: float | None = None,
-    min_volume: float | None = None,
-    min_pct_change_1h: float | None = None,
-    min_pct_change_24h: float | None = None,
-    min_pct_change_7d: float | None = None,
-    min_volume_surge: float | None = None,
-    near_ath_pct: float | None = None,
-):
-    params = _build_params(
-        sort_by, limit, min_market_cap, max_market_cap, min_volume,
-        min_pct_change_1h, min_pct_change_24h, min_pct_change_7d,
-        min_volume_surge, near_ath_pct,
-    )
-    df, fetched_at = scan(params)
+async def screen_api(q: Annotated[ScreenQuery, Depends()]):
+    df, fetched_at = scan(_build_params(q))
     rows = []
     if not df.empty:
         for r in df.to_dict(orient="records"):
