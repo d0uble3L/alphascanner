@@ -1,7 +1,6 @@
 import asyncio
 import math
 
-import pandas as pd
 import typer
 from rich.console import Console
 from rich.table import Table

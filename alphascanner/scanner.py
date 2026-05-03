@@ -55,8 +55,8 @@ def historical_avg_volume() -> pd.DataFrame:
             return pd.DataFrame(columns=["coin_id", "avg_volume"])
         history = timestamps[1:]
         placeholders = ",".join("?" for _ in history)
-        df = pd.read_sql_query(  # nosec B608 — placeholders are ? markers, not user input
-            f"SELECT coin_id, AVG(total_volume) AS avg_volume FROM snapshots "
+        df = pd.read_sql_query(
+            f"SELECT coin_id, AVG(total_volume) AS avg_volume FROM snapshots "  # nosec B608
             f"WHERE fetched_at IN ({placeholders}) GROUP BY coin_id",
             conn,
             params=history,
