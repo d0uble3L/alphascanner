@@ -12,8 +12,13 @@ COPY pyproject.toml ./
 COPY alphascanner ./alphascanner
 RUN pip install .
 
-RUN mkdir -p /data
+RUN mkdir -p /data && \
+    useradd -m -u 1000 appuser && \
+    chown appuser /data
+
 VOLUME ["/data"]
 EXPOSE 8000
+
+USER appuser
 
 CMD ["uvicorn", "alphascanner.api:app", "--host", "0.0.0.0", "--port", "8000"]

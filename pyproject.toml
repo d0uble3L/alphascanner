@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.4"]
+dev = ["pytest>=8", "ruff>=0.4", "bandit>=1.7", "pip-audit>=2.7"]
 
 [project.scripts]
 alphascanner = "alphascanner.cli:app"
@@ -37,3 +37,7 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = []
