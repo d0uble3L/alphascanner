@@ -1,9 +1,23 @@
 # AlphaScanner
 
-Altcoin opportunity screener. Pulls market data from CoinGecko on a 15-minute
-schedule, stores snapshots in SQLite, and surfaces top movers via a CLI and a
-FastAPI web UI. Filter by volume surge, price change windows, market-cap band,
-and proximity to all-time high.
+AlphaScanner is a crypto market screener that shows you which altcoins are
+showing unusual activity right now. It answers: **"Which coins are moving, and
+why might they be worth watching?"**
+
+It pulls the top 500 coins by market cap from CoinGecko every 15 minutes and
+surfaces them through filters:
+
+- **Volume surge** — coins trading at a multiple of their recent average volume (unusual buying/selling pressure)
+- **Price change** — biggest movers over 1h, 24h, or 7d
+- **Near all-time high** — coins within X% of their ATH
+- **Market cap band** — filter by size (large cap, mid cap, small cap)
+
+The goal is to spot coins breaking out or showing early momentum signals before
+they become obvious — the kind of thing a trader would otherwise scan manually
+across multiple tabs.
+
+Pulls market data from CoinGecko on a 15-minute schedule, stores snapshots in
+SQLite, and surfaces results via a CLI and a FastAPI web UI.
 
 ## Stack
 
