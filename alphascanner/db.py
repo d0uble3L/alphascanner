@@ -29,6 +29,13 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_coin_fetched
     ON snapshots(coin_id, fetched_at);
 CREATE INDEX IF NOT EXISTS idx_snapshots_fetched
     ON snapshots(fetched_at);
+CREATE TABLE IF NOT EXISTS fetch_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    attempted_at TEXT NOT NULL,
+    ok INTEGER NOT NULL,
+    status_code INTEGER,
+    message TEXT
+);
 """
 
 

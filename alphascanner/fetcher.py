@@ -83,6 +83,24 @@ def store_snapshot(coins: list[dict]) -> tuple[int, str]:
     return len(rows), fetched_at
 
 
+def _log_fetch(ok: bool, status_code: int | None, message: str) -> None:
+    attempted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO fetch_log (attempted_at, ok, status_code, message) VALUES (?,?,?,?)",
+            (attempted_at, int(ok), status_code, message),
+        )
+
+
 async def run_fetch() -> tuple[int, str]:
-    coins = await fetch_all()
-    return store_snapshot(coins)
+    try:
+        coins = await fetch_all()
+        n, ts = store_snapshot(coins)
+        _log_fetch(ok=True, status_code=None, message=f"{n} coins stored")
+        return n, ts
+    except httpx.HTTPStatusError as exc:
+        _log_fetch(ok=False, status_code=exc.response.status_code, message=str(exc))
+        raise
+    except Exception as exc:
+        _log_fetch(ok=False, status_code=None, message=str(exc))
+        raise

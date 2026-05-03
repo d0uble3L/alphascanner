@@ -1,6 +1,33 @@
+{% if fetch_status and not fetch_status.ok %}
+  {% if fetch_status.status_code == 429 %}
+  <div class="banner warn">
+    <strong>Rate limited by CoinGecko (429).</strong>
+    Reduce <code>ALPHASCANNER_FETCH_PAGES</code> in <code>.env</code> (try <code>2</code>),
+    or add a free <code>ALPHASCANNER_COINGECKO_API_KEY</code>.
+    Last attempt: {{ fetch_status.attempted_at }}
+  </div>
+  {% else %}
+  <div class="banner error">
+    <strong>Last fetch failed</strong> at {{ fetch_status.attempted_at }}:
+    {{ fetch_status.message }}
+  </div>
+  {% endif %}
+{% endif %}
+
 {% if not rows %}
 <div class="empty">
-  No data yet — run <code>alphascanner fetch</code> or wait for the scheduler to write a snapshot.
+  {% if fetch_status is none %}
+    No snapshots yet. Trigger a manual fetch:<br>
+    <code>docker compose exec scheduler python -m alphascanner.cli fetch</code>
+  {% elif not fetch_status.ok and fetch_status.status_code == 429 %}
+    No data — rate limited. Fix the config above, then run:<br>
+    <code>docker compose exec scheduler python -m alphascanner.cli fetch</code>
+  {% elif not fetch_status.ok %}
+    No data — last fetch failed. Check container logs, then run:<br>
+    <code>docker compose exec scheduler python -m alphascanner.cli fetch</code>
+  {% else %}
+    No results match your filters.
+  {% endif %}
 </div>
 {% else %}
 <div class="meta">

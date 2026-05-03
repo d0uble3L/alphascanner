@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, BeforeValidator, Field
 
-from .db import init_db
+from .db import connect, init_db
 from .scanner import FilterParams, scan
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -81,6 +81,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AlphaScanner", lifespan=lifespan)
 
 
+def _latest_fetch_status() -> dict | None:
+    try:
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT attempted_at, ok, status_code, message "
+                "FROM fetch_log ORDER BY attempted_at DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
 def _build_params(q: ScreenQuery) -> FilterParams:
     return FilterParams(
         sort_by=q.sort_by,
@@ -106,7 +118,11 @@ async def screen_html(request: Request, q: Annotated[ScreenQuery, Depends()]):
     df, fetched_at = scan(_build_params(q))
     return TEMPLATES.TemplateResponse(
         request, "table.html",
-        {"rows": _rows_for_display(df), "fetched_at": fetched_at},
+        {
+            "rows": _rows_for_display(df),
+            "fetched_at": fetched_at,
+            "fetch_status": _latest_fetch_status(),
+        },
     )
 
 
