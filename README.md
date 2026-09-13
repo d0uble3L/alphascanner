@@ -32,13 +32,21 @@ SQLite, and surfaces results via a CLI and a FastAPI web UI.
 
 ## Quick start (local)
 
+Requires Python 3.11+ (3.12 is what CI and Docker use).
+
 ```bash
+python3.12 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 cp .env.example .env
 alphascanner init           # create the SQLite db
 alphascanner fetch          # one-shot snapshot
 alphascanner screen --sort-by volume_surge --min-volume-surge 2 --limit 20
 ```
+
+Leave `ALPHASCANNER_COINGECKO_API_KEY` blank in `.env` to use the free
+CoinGecko tier — no key needed. See [Configuration](#configuration) for
+Demo/Pro key setup.
 
 Run the web UI:
 
@@ -59,7 +67,12 @@ python -m alphascanner.scheduler
 cp .env.example .env
 docker compose up --build
 # web on http://localhost:8000, scheduler writes to ./data
+docker compose ps   # both services should reach "healthy" within ~30s
 ```
+
+`web` is checked via `GET /healthz`; `scheduler` has no HTTP endpoint, so it's
+checked via a heartbeat file (`/data/scheduler.heartbeat`) touched after every
+fetch loop iteration — a wedged scheduler shows as `unhealthy` within an hour.
 
 ## Signals
 
@@ -95,15 +108,22 @@ alphascanner screen [OPTIONS]       # rank latest snapshot
 ## Configuration
 
 All settings are env vars prefixed `ALPHASCANNER_` (see `.env.example`). The
-free CoinGecko tier works without an API key; set
-`ALPHASCANNER_COINGECKO_API_KEY` to use a Demo or Pro key.
+free CoinGecko tier works without an API key. To use a Demo key, just set
+`ALPHASCANNER_COINGECKO_API_KEY`. To use a Pro key, also set
+`ALPHASCANNER_COINGECKO_BASE_URL=https://pro-api.coingecko.com/api/v3` — the
+client picks the matching auth header (`x-cg-demo-api-key` /
+`x-cg-pro-api-key`) from whichever base URL is configured.
 
 ## Tests
 
 ```bash
-pytest
-ruff check .
+pytest                                              # 44 tests: pure logic + db/api/cli/scheduler
+ruff check .                                        # lint
+bandit -r alphascanner/ -ll -x alphascanner/templates  # security static analysis
 ```
+
+These are the same checks CI runs (`.github/workflows/ci.yml`), plus a
+`pip-audit` dependency scan.
 
 ## Layout
 
@@ -120,4 +140,5 @@ alphascanner/
 tests/
 Dockerfile
 docker-compose.yml
+requirements-lock.txt  # pinned runtime deps used by the Docker build
 ```

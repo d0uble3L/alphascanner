@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -19,9 +19,16 @@ INSERT INTO snapshots (
 
 
 def _headers() -> dict[str, str]:
-    if settings.coingecko_api_key:
-        return {"x-cg-demo-api-key": settings.coingecko_api_key}
-    return {}
+    if not settings.coingecko_api_key:
+        return {}
+    # Pro-tier keys must be sent on the pro-api header/host; Demo-tier keys
+    # use the free api.coingecko.com host and the demo header.
+    header = (
+        "x-cg-pro-api-key"
+        if "pro-api.coingecko.com" in settings.coingecko_base_url
+        else "x-cg-demo-api-key"
+    )
+    return {header: settings.coingecko_api_key}
 
 
 async def fetch_page(client: httpx.AsyncClient, page: int) -> list[dict]:
@@ -76,7 +83,7 @@ def _row(c: dict, fetched_at: str) -> tuple:
 
 
 def store_snapshot(coins: list[dict]) -> tuple[int, str]:
-    fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    fetched_at = datetime.now(UTC).isoformat(timespec="seconds")
     rows = [_row(c, fetched_at) for c in coins]
     with connect() as conn:
         conn.executemany(INSERT_SQL, rows)
@@ -84,7 +91,7 @@ def store_snapshot(coins: list[dict]) -> tuple[int, str]:
 
 
 def _log_fetch(ok: bool, status_code: int | None, message: str) -> None:
-    attempted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    attempted_at = datetime.now(UTC).isoformat(timespec="seconds")
     with connect() as conn:
         conn.execute(
             "INSERT INTO fetch_log (attempted_at, ok, status_code, message) VALUES (?,?,?,?)",

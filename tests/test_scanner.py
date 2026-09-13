@@ -74,6 +74,13 @@ def test_volume_surge_no_history(latest_df):
     assert enriched["volume_surge"].isna().all()
 
 
+def test_volume_surge_zero_avg_volume_is_nan_not_inf():
+    latest = pd.DataFrame([{"coin_id": "dead", "total_volume": 100.0}])
+    avg = pd.DataFrame([{"coin_id": "dead", "avg_volume": 0.0}])
+    enriched = with_volume_surge(latest, avg)
+    assert pd.isna(enriched.iloc[0]["volume_surge"])
+
+
 def test_market_cap_filter(latest_df, avg_df):
     enriched = with_volume_surge(latest_df, avg_df)
     out = apply_filters(enriched, FilterParams(max_market_cap=100_000_000, sort_by="volume"))

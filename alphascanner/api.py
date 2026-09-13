@@ -1,3 +1,4 @@
+import logging
 import math
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -10,6 +11,8 @@ from pydantic import BaseModel, BeforeValidator, Field
 
 from .db import connect, init_db
 from .scanner import FilterParams, scan
+
+log = logging.getLogger(__name__)
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -90,6 +93,7 @@ def _latest_fetch_status() -> dict | None:
             ).fetchone()
         return dict(row) if row else None
     except Exception:
+        log.exception("Failed to read fetch status")
         return None
 
 
