@@ -73,7 +73,10 @@ def with_volume_surge(latest: pd.DataFrame, avg: pd.DataFrame) -> pd.DataFrame:
         latest["volume_surge"] = pd.NA
         return latest
     merged = latest.merge(avg, on="coin_id", how="left")
-    merged["volume_surge"] = merged["total_volume"] / merged["avg_volume"]
+    # A zero avg_volume would otherwise divide to +inf and falsely sort
+    # to the top of a descending volume_surge ranking.
+    safe_avg = merged["avg_volume"].replace(0, float("nan"))
+    merged["volume_surge"] = merged["total_volume"] / safe_avg
     return merged
 
 

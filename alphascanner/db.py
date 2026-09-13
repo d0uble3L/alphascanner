@@ -49,8 +49,14 @@ def init_db(db_path: str | None = None) -> None:
 @contextmanager
 def connect(db_path: str | None = None):
     path = db_path or settings.db_path
-    conn = sqlite3.connect(path)
+    # timeout= sets SQLite's busy-wait so a reader doesn't immediately
+    # error out while the scheduler's writer transaction is in flight;
+    # WAL lets readers proceed concurrently with that writer instead of
+    # blocking on it at all.
+    conn = sqlite3.connect(path, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     try:
         yield conn
         conn.commit()

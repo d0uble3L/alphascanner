@@ -1,6 +1,7 @@
 import asyncio
 import math
 
+import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -36,7 +37,14 @@ def init():
 def fetch():
     """Fetch a snapshot from CoinGecko and store it."""
     init_db()
-    n, ts = asyncio.run(run_fetch())
+    try:
+        n, ts = asyncio.run(run_fetch())
+    except httpx.HTTPStatusError as exc:
+        console.print(f"[red]Fetch failed: HTTP {exc.response.status_code}[/red]")
+        raise typer.Exit(1) from None
+    except Exception as exc:  # noqa: BLE001 - surface any failure as a clean CLI message
+        console.print(f"[red]Fetch failed: {exc}[/red]")
+        raise typer.Exit(1) from None
     console.print(f"[green]Stored {n} coins[/green] at [cyan]{ts}[/cyan]")
 
 

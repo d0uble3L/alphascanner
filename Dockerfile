@@ -1,4 +1,4 @@
-FROM python:3.15-rc-alpine3.22
+FROM python:3.12-alpine
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,19 +6,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     ALPHASCANNER_DB_PATH=/data/alphascanner.db
 
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+RUN apk update && \
+    apk upgrade --no-cache
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+COPY pyproject.toml requirements-lock.txt ./
 COPY alphascanner ./alphascanner
-RUN pip install .
+RUN pip install --no-deps -r requirements-lock.txt && \
+    pip install --no-deps .
 
 RUN mkdir -p /data && \
-    useradd -m -u 1000 appuser && \
+    addgroup -g 1000 appuser && \
+    adduser -D -u 1000 -G appuser appuser && \
     chown appuser /data
 
 VOLUME ["/data"]

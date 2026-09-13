@@ -95,8 +95,11 @@ alphascanner screen [OPTIONS]       # rank latest snapshot
 ## Configuration
 
 All settings are env vars prefixed `ALPHASCANNER_` (see `.env.example`). The
-free CoinGecko tier works without an API key; set
-`ALPHASCANNER_COINGECKO_API_KEY` to use a Demo or Pro key.
+free CoinGecko tier works without an API key. To use a Demo key, just set
+`ALPHASCANNER_COINGECKO_API_KEY`. To use a Pro key, also set
+`ALPHASCANNER_COINGECKO_BASE_URL=https://pro-api.coingecko.com/api/v3` — the
+client picks the matching auth header (`x-cg-demo-api-key` /
+`x-cg-pro-api-key`) from whichever base URL is configured.
 
 ## Tests
 
@@ -120,4 +123,5 @@ alphascanner/
 tests/
 Dockerfile
 docker-compose.yml
+requirements-lock.txt  # pinned runtime deps used by the Docker build
 ```
