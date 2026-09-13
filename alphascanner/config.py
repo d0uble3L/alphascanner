@@ -17,5 +17,11 @@ class Settings(BaseSettings):
     fetch_interval_minutes: int = 15
     history_window: int = 20
 
+    # If unset, the web UI/API require no authentication (fine for
+    # localhost-only use). Set both to require HTTP Basic Auth.
+    auth_username: str = "admin"
+    auth_password: str | None = None
+    rate_limit_per_minute: int = 60
+
 
 settings = Settings()

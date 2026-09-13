@@ -114,6 +114,19 @@ free CoinGecko tier works without an API key. To use a Demo key, just set
 client picks the matching auth header (`x-cg-demo-api-key` /
 `x-cg-pro-api-key`) from whichever base URL is configured.
 
+By default the web UI/API have no authentication and no rate limit beyond a
+generous default — fine for localhost-only use. If you expose this beyond
+localhost:
+
+- Set `ALPHASCANNER_AUTH_PASSWORD` (and optionally `ALPHASCANNER_AUTH_USERNAME`,
+  default `admin`) to require HTTP Basic Auth on `/`, `/screen`, and
+  `/api/screen`. `/healthz` is always open (docker-compose's healthcheck
+  depends on it).
+- `ALPHASCANNER_RATE_LIMIT_PER_MINUTE` (default 60) caps requests per client
+  IP to those same routes; excess requests get a `429`. The limiter is
+  in-memory and per-process, so it resets on restart and isn't shared across
+  multiple workers/replicas.
+
 ## Tests
 
 ```bash
