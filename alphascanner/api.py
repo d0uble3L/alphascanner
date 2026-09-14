@@ -1,20 +1,66 @@
 import logging
 import math
+import secrets
+import time
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, BeforeValidator, Field
 
+from .config import settings
 from .db import connect, init_db
 from .scanner import FilterParams, scan
 
 log = logging.getLogger(__name__)
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+_basic_auth = HTTPBasic(auto_error=False)
+
+
+def require_auth(credentials: Annotated[HTTPBasicCredentials | None, Depends(_basic_auth)]) -> None:
+    if not settings.auth_password:
+        return  # auth disabled: no password configured
+    valid = credentials is not None and (
+        secrets.compare_digest(credentials.username, settings.auth_username)
+        and secrets.compare_digest(credentials.password, settings.auth_password)
+    )
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+
+class _RateLimiter:
+    """Fixed-window limiter, keyed by client IP. In-memory, single-process only."""
+
+    def __init__(self, window_seconds: int = 60):
+        self.window_seconds = window_seconds
+        self._hits: dict[str, deque[float]] = defaultdict(deque)
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        hits = self._hits[key]
+        while hits and now - hits[0] > self.window_seconds:
+            hits.popleft()
+        if len(hits) >= settings.rate_limit_per_minute:
+            return False
+        hits.append(now)
+        return True
+
+    def reset(self) -> None:
+        self._hits.clear()
+
+
+_rate_limiter = _RateLimiter()
 
 _SortBy = Literal["volume_surge", "pct_change_1h", "pct_change_24h", "pct_change_7d", "volume", "market_cap"]
 
@@ -84,6 +130,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AlphaScanner", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    # /healthz stays unlimited: docker-compose polls it every 30s and it does
+    # no DB/network work of its own.
+    if request.url.path != "/healthz":
+        client_ip = request.client.host if request.client else "unknown"
+        if not _rate_limiter.allow(client_ip):
+            return JSONResponse({"detail": "Too many requests"}, status_code=429)
+    return await call_next(request)
+
+
 def _latest_fetch_status() -> dict | None:
     try:
         with connect() as conn:
@@ -112,12 +169,12 @@ def _build_params(q: ScreenQuery) -> FilterParams:
     )
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
 async def index(request: Request):
     return TEMPLATES.TemplateResponse(request, "index.html")
 
 
-@app.get("/screen", response_class=HTMLResponse)
+@app.get("/screen", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
 async def screen_html(request: Request, q: Annotated[ScreenQuery, Depends()]):
     df, fetched_at = scan(_build_params(q))
     return TEMPLATES.TemplateResponse(
@@ -130,7 +187,7 @@ async def screen_html(request: Request, q: Annotated[ScreenQuery, Depends()]):
     )
 
 
-@app.get("/api/screen")
+@app.get("/api/screen", dependencies=[Depends(require_auth)])
 async def screen_api(q: Annotated[ScreenQuery, Depends()]):
     df, fetched_at = scan(_build_params(q))
     rows = []
