@@ -4,7 +4,7 @@ Format: **Now / Next / Later**. Now = committed for the current sprint. Next
 = planned, scoped, but timing is soft. Later = directional strategic bets,
 not yet scoped.
 
-Last updated: 2026-09-28.
+Last updated: 2026-09-29.
 
 ## Status
 
@@ -20,12 +20,14 @@ Recently shipped:
   `cli.py`, `scheduler.py` (previously untested)
 - Docker healthchecks for both `web` and `scheduler`
 - Optional HTTP Basic Auth and per-IP rate limiting on the web UI/API
+- This roadmap itself (#17, merged)
 
-In flight:
+In flight — all 4 green on CI, awaiting review/approval to merge (branch
+protection requires 1 approval):
 
 - 3 Dependabot PRs bumping GitHub Actions versions (#5, #11, #13) — pure CI
   version bumps, no app code touched
-- `.env.example` local-setup fix (PR #16)
+- `.env.example` local-setup fix (#16)
 
 ## Now (this sprint)
 
