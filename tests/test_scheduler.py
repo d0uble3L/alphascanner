@@ -1,13 +1,22 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
 from alphascanner import scheduler
+from alphascanner.config import settings
 
 
-def test_main_loop_survives_fetch_failure_and_writes_heartbeat(db_path, monkeypatch, tmp_path):
-    heartbeat_path = tmp_path / "heartbeat"
-    monkeypatch.setattr(scheduler, "HEARTBEAT_PATH", str(heartbeat_path))
+def test_heartbeat_lives_next_to_the_db(monkeypatch):
+    monkeypatch.setattr(settings, "db_path", "/data/alphascanner.db")
+    # Must match the path docker-compose.yml's scheduler healthcheck reads.
+    assert scheduler.heartbeat_path() == Path("/data/scheduler.heartbeat")
+    monkeypatch.setattr(settings, "db_path", "data/alphascanner.db")
+    assert scheduler.heartbeat_path() == Path("data/scheduler.heartbeat")
+
+
+def test_main_loop_survives_fetch_failure_and_writes_heartbeat(db_path, monkeypatch):
+    heartbeat_path = Path(db_path).parent / "scheduler.heartbeat"
 
     call_count = {"n": 0}
 
@@ -31,7 +40,7 @@ def test_main_loop_survives_fetch_failure_and_writes_heartbeat(db_path, monkeypa
 
 
 def test_touch_heartbeat_warns_on_oserror(monkeypatch, caplog):
-    monkeypatch.setattr(scheduler, "HEARTBEAT_PATH", "/no/such/directory/heartbeat")
+    monkeypatch.setattr(settings, "db_path", "/no/such/directory/alphascanner.db")
     with caplog.at_level("WARNING"):
         scheduler._touch_heartbeat()
     assert any("Could not write heartbeat file" in r.message for r in caplog.records)
