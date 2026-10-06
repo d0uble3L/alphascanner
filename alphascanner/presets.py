@@ -21,8 +21,12 @@ class Preset:
     updated_at: str
 
 
+def is_valid_name(name: str) -> bool:
+    return _NAME_RE.fullmatch(name) is not None
+
+
 def _check_name(name: str) -> None:
-    if not _NAME_RE.fullmatch(name):
+    if not is_valid_name(name):
         raise InvalidPresetName(
             "Preset names must be 1-64 characters: letters, digits, '-' or '_'."
         )
@@ -50,7 +54,13 @@ def _from_row(row) -> Preset:
     )
 
 
+# Lookups and deletes allowlist-check the name before it reaches SQL, like saves
+# do. The queries are parameterized regardless; this keeps untrusted input (e.g.
+# the ?preset= query param) from ever touching the database layer. A name that
+# fails the check can't exist, since save_preset only stores valid names.
 def get_preset(name: str) -> Preset | None:
+    if not is_valid_name(name):
+        return None
     with connect() as conn:
         row = conn.execute("SELECT * FROM presets WHERE name = ?", (name,)).fetchone()
     return _from_row(row) if row else None
@@ -63,6 +73,8 @@ def list_presets() -> list[Preset]:
 
 
 def delete_preset(name: str) -> bool:
+    if not is_valid_name(name):
+        return False
     with connect() as conn:
         cur = conn.execute("DELETE FROM presets WHERE name = ?", (name,))
     return cur.rowcount > 0

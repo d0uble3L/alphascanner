@@ -66,3 +66,15 @@ def test_to_filter_params_maps_every_field():
     )
     assert query.to_filter_params() == FilterParams(**query.model_dump())
     assert query.to_filter_params().near_ath_pct == 0.9
+
+
+@pytest.mark.parametrize("bad", ["", "x' OR '1'='1", "a; DROP TABLE presets;--", "x" * 65])
+def test_invalid_names_never_reach_the_database(monkeypatch, bad):
+    import alphascanner.presets as presets_module
+
+    def no_db(*a, **k):
+        raise AssertionError("database was queried with an invalid preset name")
+
+    monkeypatch.setattr(presets_module, "connect", no_db)
+    assert get_preset(bad) is None
+    assert delete_preset(bad) is False

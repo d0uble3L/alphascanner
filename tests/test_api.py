@@ -188,3 +188,11 @@ def test_preset_routes_require_auth_when_password_set(client, monkeypatch):
     assert client.put("/api/presets/p", json={}).status_code == 401
     assert client.delete("/api/presets/p").status_code == 401
     assert client.put("/api/presets/p", json={}, auth=("admin", "secret")).status_code == 200
+
+
+def test_preset_param_injection_payload_is_just_not_found(client):
+    client.put("/api/presets/keep", json={"limit": 5})
+    payload = "x' OR '1'='1"
+    assert client.get("/api/screen", params={"preset": payload}).status_code == 404
+    assert client.delete(f"/api/presets/{payload}").status_code == 404
+    assert [p["name"] for p in client.get("/api/presets").json()] == ["keep"]
