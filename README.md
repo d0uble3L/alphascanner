@@ -71,8 +71,10 @@ docker compose ps   # both services should reach "healthy" within ~30s
 ```
 
 `web` is checked via `GET /healthz`; `scheduler` has no HTTP endpoint, so it's
-checked via a heartbeat file (`/data/scheduler.heartbeat`) touched after every
-fetch loop iteration — a wedged scheduler shows as `unhealthy` within an hour.
+checked via a heartbeat file touched after every fetch loop iteration — a
+wedged scheduler shows as `unhealthy` within an hour. The file sits next to the
+database (`/data/scheduler.heartbeat` in Docker, `./data/scheduler.heartbeat`
+for local runs).
 
 ## Signals
 
