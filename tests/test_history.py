@@ -117,7 +117,7 @@ def test_coin_page_with_one_snapshot_has_no_charts(client, db_path):
     resp = client.get("/coin/bitcoin")
     assert resp.status_code == 200
     assert "<polyline" not in resp.text
-    assert "Needs at least 2 snapshots" in resp.text
+    assert "Not enough data to chart yet" in resp.text
 
 
 def test_screen_rows_link_to_coin_page(client, db_path):
