@@ -5,17 +5,17 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, BeforeValidator, Field
 
 from .config import settings
 from .db import connect, init_db
-from .scanner import FilterParams, scan
+from .presets import InvalidPresetName, delete_preset, get_preset, list_presets, save_preset
+from .scanner import ScreenQuery, scan
 
 log = logging.getLogger(__name__)
 
@@ -62,26 +62,9 @@ class _RateLimiter:
 
 _rate_limiter = _RateLimiter()
 
-_SortBy = Literal["volume_surge", "pct_change_1h", "pct_change_24h", "pct_change_7d", "volume", "market_cap"]
-
-_NoneIfEmpty = BeforeValidator(lambda v: None if v == "" else v)
-# ge/le constraints live inside the float branch so None bypasses them
-_OptFloat = Annotated[float | None, _NoneIfEmpty]
-_OptFloatPos = Annotated[Annotated[float, Field(ge=0)] | None, _NoneIfEmpty]
-_OptAthPct = Annotated[Annotated[float, Field(ge=0.0, le=1.0)] | None, _NoneIfEmpty]
-
-
-class ScreenQuery(BaseModel):
-    sort_by: _SortBy = "volume_surge"
-    limit: Annotated[int, Field(ge=1, le=200)] = 20
-    min_market_cap: _OptFloatPos = None
-    max_market_cap: _OptFloatPos = None
-    min_volume: _OptFloatPos = None
-    min_pct_change_1h: _OptFloat = None
-    min_pct_change_24h: _OptFloat = None
-    min_pct_change_7d: _OptFloat = None
-    min_volume_surge: _OptFloatPos = None
-    near_ath_pct: _OptAthPct = None
+_PresetParam = Annotated[
+    str | None, Query(max_length=64, description="Run a saved preset instead of the filter params")
+]
 
 
 def _format_number(v, places: int = 2) -> str:
@@ -154,29 +137,26 @@ def _latest_fetch_status() -> dict | None:
         return None
 
 
-def _build_params(q: ScreenQuery) -> FilterParams:
-    return FilterParams(
-        sort_by=q.sort_by,
-        limit=q.limit,
-        min_market_cap=q.min_market_cap,
-        max_market_cap=q.max_market_cap,
-        min_volume=q.min_volume,
-        min_pct_change_1h=q.min_pct_change_1h,
-        min_pct_change_24h=q.min_pct_change_24h,
-        min_pct_change_7d=q.min_pct_change_7d,
-        min_volume_surge=q.min_volume_surge,
-        near_ath_pct=q.near_ath_pct,
-    )
+def _resolve_query(q: ScreenQuery, preset: str | None) -> ScreenQuery:
+    """A named preset, when given, replaces the filter params entirely."""
+    if preset is None:
+        return q
+    saved = get_preset(preset)
+    if saved is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset not found")
+    return saved.query
 
 
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
 async def index(request: Request):
-    return TEMPLATES.TemplateResponse(request, "index.html")
+    return TEMPLATES.TemplateResponse(request, "index.html", {"presets": list_presets()})
 
 
 @app.get("/screen", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
-async def screen_html(request: Request, q: Annotated[ScreenQuery, Depends()]):
-    df, fetched_at = scan(_build_params(q))
+async def screen_html(
+    request: Request, q: Annotated[ScreenQuery, Depends()], preset: _PresetParam = None
+):
+    df, fetched_at = scan(_resolve_query(q, preset).to_filter_params())
     return TEMPLATES.TemplateResponse(
         request, "table.html",
         {
@@ -188,8 +168,8 @@ async def screen_html(request: Request, q: Annotated[ScreenQuery, Depends()]):
 
 
 @app.get("/api/screen", dependencies=[Depends(require_auth)])
-async def screen_api(q: Annotated[ScreenQuery, Depends()]):
-    df, fetched_at = scan(_build_params(q))
+async def screen_api(q: Annotated[ScreenQuery, Depends()], preset: _PresetParam = None):
+    df, fetched_at = scan(_resolve_query(q, preset).to_filter_params())
     rows = []
     if not df.empty:
         for r in df.to_dict(orient="records"):
@@ -197,6 +177,33 @@ async def screen_api(q: Annotated[ScreenQuery, Depends()]):
     return JSONResponse(
         {"fetched_at": fetched_at, "count": len(rows), "results": rows}
     )
+
+
+@app.get("/api/presets", dependencies=[Depends(require_auth)])
+async def list_presets_api():
+    return [
+        {"name": p.name, "params": p.query.model_dump(), "updated_at": p.updated_at}
+        for p in list_presets()
+    ]
+
+
+# Writes are PUT/DELETE only (never POST): HTML forms can't send them and they
+# aren't CORS-safelisted, so another origin can't reuse browser-cached Basic Auth
+# credentials to modify presets without a preflight this app never grants.
+@app.put("/api/presets/{name}", dependencies=[Depends(require_auth)])
+async def save_preset_api(name: str, query: ScreenQuery):
+    try:
+        save_preset(name, query)
+    except InvalidPresetName as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return {"name": name, "params": query.model_dump()}
+
+
+@app.delete("/api/presets/{name}", dependencies=[Depends(require_auth)])
+async def delete_preset_api(name: str):
+    if not delete_preset(name):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/healthz")

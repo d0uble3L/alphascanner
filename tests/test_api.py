@@ -113,3 +113,78 @@ def test_healthz_is_not_rate_limited(client, monkeypatch):
     monkeypatch.setattr(settings, "rate_limit_per_minute", 1)
     for _ in range(5):
         assert client.get("/healthz").status_code == 200
+
+
+def _insert_coins(db_path, *coins):
+    with connect(db_path) as conn:
+        for coin_id, volume in coins:
+            conn.execute(
+                "INSERT INTO snapshots (coin_id, symbol, name, total_volume, fetched_at) "
+                "VALUES (?,?,?,?,?)",
+                (coin_id, coin_id, coin_id.title(), volume, "2024-01-01T00:00:00"),
+            )
+
+
+def test_preset_crud(client):
+    assert client.get("/api/presets").json() == []
+
+    resp = client.put("/api/presets/top1", json={"sort_by": "volume", "limit": 1})
+    assert resp.status_code == 200
+    assert resp.json()["params"]["limit"] == 1
+
+    listed = client.get("/api/presets").json()
+    assert [p["name"] for p in listed] == ["top1"]
+    assert listed[0]["params"]["sort_by"] == "volume"
+
+    assert client.delete("/api/presets/top1").status_code == 204
+    assert client.delete("/api/presets/top1").status_code == 404
+    assert client.get("/api/presets").json() == []
+
+
+def test_preset_put_rejects_invalid_name(client):
+    resp = client.put("/api/presets/bad%20name", json={})
+    assert resp.status_code == 422
+    assert "Preset names" in resp.json()["detail"]
+
+
+def test_preset_put_rejects_invalid_params(client):
+    resp = client.put("/api/presets/p", json={"limit": 0})
+    assert resp.status_code == 422
+    resp = client.put("/api/presets/p", json={"sort_by": "not_a_sort"})
+    assert resp.status_code == 422
+    assert client.get("/api/presets").json() == []
+
+
+def test_screen_with_preset_uses_saved_params(client, db_path):
+    _insert_coins(db_path, ("btc", 200.0), ("eth", 100.0))
+    client.put("/api/presets/top1", json={"sort_by": "volume", "limit": 1})
+
+    body = client.get("/api/screen", params={"preset": "top1", "limit": 50}).json()
+    assert body["count"] == 1
+    assert body["results"][0]["coin_id"] == "btc"
+
+    html = client.get("/screen", params={"preset": "top1"})
+    assert html.status_code == 200
+    assert "Btc" in html.text
+    assert "Eth" not in html.text
+
+
+def test_screen_with_unknown_preset_is_404(client):
+    assert client.get("/api/screen", params={"preset": "missing"}).status_code == 404
+    assert client.get("/screen", params={"preset": "missing"}).status_code == 404
+
+
+def test_index_lists_saved_presets(client):
+    client.put("/api/presets/my-screen", json={"min_volume_surge": 2.5})
+    resp = client.get("/")
+    assert 'value="my-screen"' in resp.text
+    # params JSON is embedded HTML-escaped in a data attribute
+    assert "&#34;min_volume_surge&#34;:2.5" in resp.text
+
+
+def test_preset_routes_require_auth_when_password_set(client, monkeypatch):
+    monkeypatch.setattr(settings, "auth_password", "secret")
+    assert client.get("/api/presets").status_code == 401
+    assert client.put("/api/presets/p", json={}).status_code == 401
+    assert client.delete("/api/presets/p").status_code == 401
+    assert client.put("/api/presets/p", json={}, auth=("admin", "secret")).status_code == 200
