@@ -1,16 +1,22 @@
 import asyncio
 import math
+from dataclasses import asdict
 
 import httpx
 import typer
+from pydantic import ValidationError
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from .db import init_db
 from .fetcher import run_fetch
-from .scanner import FilterParams, scan
+from .presets import InvalidPresetName, delete_preset, get_preset, list_presets, save_preset
+from .scanner import FilterParams, ScreenQuery, scan
 
 app = typer.Typer(help="AlphaScanner — altcoin opportunity screener", no_args_is_help=True)
+preset_app = typer.Typer(help="Manage saved screens (filter presets).", no_args_is_help=True)
+app.add_typer(preset_app, name="preset")
 console = Console()
 
 
@@ -65,20 +71,46 @@ def screen(
     near_ath_pct: float = typer.Option(
         None, help="0.95 means within 5%% of all-time high"
     ),
+    preset: str = typer.Option(
+        None, help="Run a saved preset; the filter flags above are ignored"
+    ),
+    save_as: str = typer.Option(None, help="Save these filters as a named preset"),
 ):
     """Show top movers under the given filters."""
-    params = FilterParams(
-        sort_by=sort_by,
-        limit=limit,
-        min_market_cap=min_market_cap,
-        max_market_cap=max_market_cap,
-        min_volume=min_volume,
-        min_pct_change_1h=min_pct_change_1h,
-        min_pct_change_24h=min_pct_change_24h,
-        min_pct_change_7d=min_pct_change_7d,
-        min_volume_surge=min_volume_surge,
-        near_ath_pct=near_ath_pct,
-    )
+    init_db()
+    if preset:
+        saved = get_preset(preset)
+        if saved is None:
+            console.print(f"[red]No preset named {escape(repr(preset))}.[/red]")
+            raise typer.Exit(1)
+        params = saved.query.to_filter_params()
+    else:
+        params = FilterParams(
+            sort_by=sort_by,
+            limit=limit,
+            min_market_cap=min_market_cap,
+            max_market_cap=max_market_cap,
+            min_volume=min_volume,
+            min_pct_change_1h=min_pct_change_1h,
+            min_pct_change_24h=min_pct_change_24h,
+            min_pct_change_7d=min_pct_change_7d,
+            min_volume_surge=min_volume_surge,
+            near_ath_pct=near_ath_pct,
+        )
+
+    if save_as:
+        # Validate through the same model the API uses, so a preset saved here
+        # can always be loaded by the web UI/API too.
+        try:
+            save_preset(save_as, ScreenQuery.model_validate(asdict(params)))
+        except InvalidPresetName as exc:
+            console.print(f"[red]{escape(str(exc))}[/red]")
+            raise typer.Exit(1) from None
+        except ValidationError as exc:
+            console.print(f"[red]Invalid filters, preset not saved:[/red]\n{escape(str(exc))}")
+            raise typer.Exit(1) from None
+        console.print(f"[green]Saved preset {escape(repr(save_as))}.[/green]")
+
     df, fetched_at = scan(params)
     if df.empty:
         console.print(
@@ -86,7 +118,8 @@ def screen(
         )
         raise typer.Exit(1)
 
-    table = Table(title=f"Top {len(df)} by {sort_by} — snapshot {fetched_at}")
+    title_source = f"preset {preset}" if preset else params.sort_by
+    table = Table(title=f"Top {len(df)} by {escape(title_source)} — snapshot {fetched_at}")
     cols = [
         ("symbol", "Symbol"),
         ("name", "Name"),
@@ -104,6 +137,37 @@ def screen(
     for _, row in df.iterrows():
         table.add_row(*[_fmt(row[c]) for c, _ in cols])
     console.print(table)
+
+
+@preset_app.command("list")
+def preset_list():
+    """List saved presets."""
+    init_db()
+    presets = list_presets()
+    if not presets:
+        console.print(
+            "[yellow]No presets saved yet. Save one with "
+            "`alphascanner screen ... --save-as NAME`.[/yellow]"
+        )
+        return
+    table = Table(title="Saved presets")
+    table.add_column("Name")
+    table.add_column("Filters")
+    table.add_column("Updated")
+    for p in presets:
+        filters = ", ".join(f"{k}={v}" for k, v in p.query.model_dump().items() if v is not None)
+        table.add_row(p.name, escape(filters), p.updated_at)
+    console.print(table)
+
+
+@preset_app.command("delete")
+def preset_delete(name: str):
+    """Delete a saved preset."""
+    init_db()
+    if not delete_preset(name):
+        console.print(f"[red]No preset named {escape(repr(name))}.[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Deleted preset {escape(repr(name))}.[/green]")
 
 
 if __name__ == "__main__":

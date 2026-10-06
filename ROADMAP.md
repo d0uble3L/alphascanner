@@ -4,7 +4,7 @@ Format: **Now / Next / Later**. Now = committed for the current sprint. Next
 = planned, scoped, but timing is soft. Later = directional strategic bets,
 not yet scoped.
 
-Last updated: 2026-09-29.
+Last updated: 2026-10-06.
 
 ## Status
 
@@ -22,20 +22,23 @@ Recently shipped:
 - Optional HTTP Basic Auth and per-IP rate limiting on the web UI/API
 - This roadmap itself (#17, merged)
 
-In flight — all 4 green on CI, awaiting review/approval to merge (branch
-protection requires 1 approval):
+In flight — awaiting review/approval to merge (branch protection requires 1
+approval):
 
 - 3 Dependabot PRs bumping GitHub Actions versions (#5, #11, #13) — pure CI
-  version bumps, no app code touched
-- `.env.example` local-setup fix (#16)
+  version bumps, no app code touched, green on CI
+- `.env.example` local-setup fix (#16), green on CI
+- 5 Dependabot PRs bumping pinned runtime deps in `requirements-lock.txt`
+  (#19–#23: fastapi, uvicorn, pandas, idna, starlette), opened 2026-10-03,
+  not yet reviewed
 
 ## Now (this sprint)
 
-| # | Item | What it is | Why now | Effort |
-|---|------|------------|---------|--------|
-| 1 | **Saved filter presets** | Name and recall a `FilterParams` combo (CLI flags / query params) instead of retyping every flag each time | Cheapest of the three, and item 2 is really "an alert = a saved preset + a notification" — sequencing this first avoids rework | S–M |
-| 2 | **Threshold alerts** | A saved screen pushes a notification (webhook to start; Slack/email later) when it starts matching, instead of requiring someone to keep the dashboard open | This is the app's actual value prop — "catch moves before they're obvious" — but today it only works if a human is actively watching | M |
-| 3 | **Per-coin history view** | A `/coin/{coin_id}` page charting price/volume/surge across the snapshots already being stored every 15 minutes | Cheapest high-value feature available — no new data collection, just a read path over data already being collected and currently discarded after the aggregate average | M |
+| # | Item | What it is | Why now | Effort | Status |
+|---|------|------------|---------|--------|--------|
+| 1 | **Saved filter presets** | Name and recall a `FilterParams` combo (CLI flags / query params) instead of retyping every flag each time | Cheapest of the three, and item 2 is really "an alert = a saved preset + a notification" — sequencing this first avoids rework | S–M | **Done** — CLI (`--save-as`, `--preset`, `preset list/delete`), API (`/api/presets`, `?preset=`), and web UI preset bar |
+| 2 | **Threshold alerts** | A saved screen pushes a notification (webhook to start; Slack/email later) when it starts matching, instead of requiring someone to keep the dashboard open | This is the app's actual value prop — "catch moves before they're obvious" — but today it only works if a human is actively watching | M | **Not Started** — unblocked now that presets exist |
+| 3 | **Per-coin history view** | A `/coin/{coin_id}` page charting price/volume/surge across the snapshots already being stored every 15 minutes | Cheapest high-value feature available — no new data collection, just a read path over data already being collected and currently discarded after the aggregate average | M | **Not Started** |
 
 **Sequencing note:** build #1 before #2 — alerts want the same "named
 filter" concept presets need, so doing presets first turns alerts into

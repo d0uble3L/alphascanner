@@ -92,17 +92,42 @@ On a fresh DB, volume surge is `null` until at least two snapshots exist.
 alphascanner init                   # create db
 alphascanner fetch                  # one snapshot from CoinGecko
 alphascanner screen [OPTIONS]       # rank latest snapshot
+alphascanner preset list            # show saved presets
+alphascanner preset delete NAME     # remove a saved preset
 ```
 
 `screen` flags: `--sort-by`, `--limit`, `--min-market-cap`, `--max-market-cap`,
 `--min-volume`, `--min-pct-change-{1h,24h,7d}`, `--min-volume-surge`,
-`--near-ath-pct`.
+`--near-ath-pct`, plus `--save-as NAME` and `--preset NAME`.
+
+### Presets
+
+Save a set of filters under a name instead of retyping the flags:
+
+```bash
+alphascanner screen --min-volume-surge 2 --max-market-cap 500000000 --save-as small-cap-surge
+alphascanner screen --preset small-cap-surge     # rerun it later
+```
+
+`--preset` runs the saved filters as-is; any other filter flags are ignored.
+Names are 1–64 characters (letters, digits, `-`, `_`). Saving an existing name
+overwrites it. Presets are validated the same way as API requests, so anything
+saved from the CLI also works in the web UI and API, and vice versa.
+
+In the web UI, the **Preset** bar above the filters loads a saved preset into
+the form, saves the current filters (leave the name blank to overwrite the
+selected preset), or deletes one.
 
 ## API
 
 - `GET /` — HTMX dashboard
 - `GET /screen` — HTML table fragment (HTMX target)
-- `GET /api/screen` — JSON, same query params as the CLI
+- `GET /api/screen` — JSON, same query params as the CLI; add `?preset=NAME`
+  to run a saved preset instead (the other params are then ignored)
+- `GET /api/presets` — list saved presets
+- `PUT /api/presets/{name}` — create/overwrite a preset; JSON body takes the
+  same fields as `/api/screen`'s query params
+- `DELETE /api/presets/{name}` — delete a preset (`204`, or `404` if missing)
 - `GET /healthz`
 
 ## Configuration
@@ -130,7 +155,7 @@ localhost:
 ## Tests
 
 ```bash
-pytest                                              # 44 tests: pure logic + db/api/cli/scheduler
+pytest                                              # pure logic + db/api/cli/scheduler/presets
 ruff check .                                        # lint
 bandit -r alphascanner/ -ll -x alphascanner/templates  # security static analysis
 ```
@@ -145,7 +170,8 @@ alphascanner/
   config.py     # pydantic-settings
   db.py         # sqlite schema + connection
   fetcher.py    # CoinGecko client + insert
-  scanner.py    # ranking / filter logic (pure pandas)
+  scanner.py    # ranking / filter logic (pure pandas) + ScreenQuery validation
+  presets.py    # saved filter presets
   cli.py        # Typer
   api.py        # FastAPI
   scheduler.py  # async loop

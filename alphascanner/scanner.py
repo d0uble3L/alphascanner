@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+from typing import Annotated, Literal
 
 import pandas as pd
+from pydantic import BaseModel, BeforeValidator, Field
 
 from .config import settings
 from .db import connect
@@ -27,6 +29,33 @@ class FilterParams:
     min_pct_change_7d: float | None = None
     min_volume_surge: float | None = None
     near_ath_pct: float | None = None
+
+
+_SortBy = Literal["volume_surge", "pct_change_1h", "pct_change_24h", "pct_change_7d", "volume", "market_cap"]
+
+_NoneIfEmpty = BeforeValidator(lambda v: None if v == "" else v)
+# ge/le constraints live inside the float branch so None bypasses them
+_OptFloat = Annotated[float | None, _NoneIfEmpty]
+_OptFloatPos = Annotated[Annotated[float, Field(ge=0)] | None, _NoneIfEmpty]
+_OptAthPct = Annotated[Annotated[float, Field(ge=0.0, le=1.0)] | None, _NoneIfEmpty]
+
+
+class ScreenQuery(BaseModel):
+    """Validated FilterParams. The single source of truth for what a screen (or saved preset) may contain."""
+
+    sort_by: _SortBy = "volume_surge"
+    limit: Annotated[int, Field(ge=1, le=200)] = 20
+    min_market_cap: _OptFloatPos = None
+    max_market_cap: _OptFloatPos = None
+    min_volume: _OptFloatPos = None
+    min_pct_change_1h: _OptFloat = None
+    min_pct_change_24h: _OptFloat = None
+    min_pct_change_7d: _OptFloat = None
+    min_volume_surge: _OptFloatPos = None
+    near_ath_pct: _OptAthPct = None
+
+    def to_filter_params(self) -> FilterParams:
+        return FilterParams(**self.model_dump())
 
 
 def latest_snapshot_df() -> tuple[pd.DataFrame, str | None]:

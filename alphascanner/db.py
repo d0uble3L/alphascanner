@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS fetch_log (
     status_code INTEGER,
     message TEXT
 );
+CREATE TABLE IF NOT EXISTS presets (
+    name TEXT PRIMARY KEY,
+    params TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 

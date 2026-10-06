@@ -33,6 +33,12 @@
   .banner.warn code { background: #1e1800; color: #f5c842; }
   .banner.error { background: #220a0a; border-color: #441010; color: #f87171; }
   .banner.error code { background: #1a0808; color: #f87171; }
+  .presets { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; font-size: 0.85rem; }
+  .presets select, .presets input, .presets button { padding: 0.4rem 0.55rem; background: #1c1d22; color: #e6e6e6; border: 1px solid #2a2c33; border-radius: 4px; font-size: 0.85rem; }
+  .presets button { cursor: pointer; }
+  .presets button:hover { border-color: #5fafff; }
+  .presets .msg { color: #9aa; }
+  .presets .msg.error { color: #f87171; }
 </style>
 </head>
 <body>
@@ -40,6 +46,20 @@
   <h1>AlphaScanner</h1>
   <span class="tag">altcoin opportunity screener</span>
 </header>
+
+<div class="presets">
+  <label for="preset-select">Preset</label>
+  <select id="preset-select">
+    <option value="">— custom —</option>
+    {% for p in presets %}
+    <option value="{{ p.name }}" data-params="{{ p.query.model_dump_json() }}">{{ p.name }}</option>
+    {% endfor %}
+  </select>
+  <input id="preset-name" placeholder="Save current filters as…" maxlength="64">
+  <button type="button" id="preset-save">Save</button>
+  <button type="button" id="preset-delete">Delete</button>
+  <span id="preset-msg" class="msg" role="status"></span>
+</div>
 
 <form class="filters"
       hx-get="/screen"
@@ -91,5 +111,81 @@
      hx-include="form.filters">
   <div class="empty">Loading…</div>
 </div>
+
+<script>
+(() => {
+  const form = document.querySelector("form.filters");
+  const select = document.getElementById("preset-select");
+  const nameInput = document.getElementById("preset-name");
+  const msg = document.getElementById("preset-msg");
+
+  function say(text, isError = false) {
+    msg.textContent = text;
+    msg.classList.toggle("error", isError);
+  }
+
+  function formParams() {
+    const params = {};
+    for (const [key, value] of new FormData(form)) params[key] = value === "" ? null : value;
+    return params;
+  }
+
+  function errorText(body) {
+    // Pydantic validation errors come back as a list; our own errors as a string.
+    if (typeof body.detail === "string") return body.detail;
+    if (Array.isArray(body.detail)) {
+      return body.detail.map((e) => `${e.loc[e.loc.length - 1]}: ${e.msg}`).join("; ");
+    }
+    return "Request failed.";
+  }
+
+  select.addEventListener("change", () => {
+    const option = select.selectedOptions[0];
+    if (!option.value) return;
+    const params = JSON.parse(option.dataset.params);
+    for (const [key, value] of Object.entries(params)) {
+      const field = form.elements.namedItem(key);
+      if (field) field.value = value ?? "";
+    }
+    form.requestSubmit();
+    say(`Loaded "${option.value}".`);
+  });
+
+  document.getElementById("preset-save").addEventListener("click", async () => {
+    // A blank name re-saves (overwrites) the currently selected preset.
+    const name = nameInput.value.trim() || select.value;
+    if (!name) return say("Enter a name to save these filters.", true);
+    const resp = await fetch(`/api/presets/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formParams()),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) return say(errorText(body), true);
+
+    let option = [...select.options].find((o) => o.value === body.name);
+    if (!option) {
+      option = new Option(body.name, body.name);
+      select.add(option);
+    }
+    option.dataset.params = JSON.stringify(body.params);
+    select.value = body.name;
+    nameInput.value = "";
+    say(`Saved "${body.name}".`);
+  });
+
+  document.getElementById("preset-delete").addEventListener("click", async () => {
+    const name = select.value;
+    if (!name) return say("Select a preset to delete.", true);
+    const resp = await fetch(`/api/presets/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!resp.ok && resp.status !== 404) {
+      return say(errorText(await resp.json().catch(() => ({}))), true);
+    }
+    select.selectedOptions[0].remove();
+    select.value = "";
+    say(`Deleted "${name}".`);
+  });
+})();
+</script>
 </body>
 </html>
