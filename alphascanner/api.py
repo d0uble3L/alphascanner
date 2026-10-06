@@ -141,6 +141,8 @@ def _resolve_query(q: ScreenQuery, preset: str | None) -> ScreenQuery:
     """A named preset, when given, replaces the filter params entirely."""
     if preset is None:
         return q
+    # deepcode ignore Sqli: false positive. get_preset() allowlist-checks the name
+    # ([A-Za-z0-9_-]{1,64}) before any query, and the query itself is parameterized.
     saved = get_preset(preset)
     if saved is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset not found")
