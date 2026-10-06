@@ -11,11 +11,20 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, s
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
+from .alerts import (
+    InvalidWebhookURL,
+    UnknownPreset,
+    delete_alert,
+    list_alerts,
+    mask_url,
+    set_alert,
+)
 from .config import settings
 from .db import connect, init_db
 from .presets import InvalidPresetName, delete_preset, list_presets, save_preset
-from .scanner import ScreenQuery, scan
+from .scanner import ScreenQuery, coin_history, scan
 
 log = logging.getLogger(__name__)
 
@@ -207,6 +216,121 @@ async def delete_preset_api(name: str):
     if not delete_preset(name):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class AlertIn(BaseModel):
+    webhook_url: Annotated[str, Field(max_length=2048)]
+
+
+def _alert_out(a) -> dict:
+    return {
+        "preset": a.preset_name,
+        "webhook": mask_url(a.webhook_url),  # the full URL may embed a secret token
+        "matching": len(a.last_matched),
+        "last_checked_at": a.last_checked_at,
+        "last_notified_at": a.last_notified_at,
+        "last_error": a.last_error,
+    }
+
+
+@app.get("/api/alerts", dependencies=[Depends(require_auth)])
+async def list_alerts_api():
+    return [_alert_out(a) for a in list_alerts()]
+
+
+# Sync def on purpose: webhook validation does a blocking DNS lookup, and FastAPI
+# runs sync handlers in a threadpool instead of on the event loop.
+@app.put("/api/alerts/{preset_name}", dependencies=[Depends(require_auth)])
+def set_alert_api(preset_name: str, body: AlertIn):
+    try:
+        set_alert(preset_name, body.webhook_url)
+    except UnknownPreset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset not found") from None
+    except InvalidWebhookURL as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    return {"preset": preset_name, "webhook": mask_url(body.webhook_url)}
+
+
+@app.delete("/api/alerts/{preset_name}", dependencies=[Depends(require_auth)])
+async def delete_alert_api(preset_name: str):
+    if not delete_alert(preset_name):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+_HistoryLimit = Annotated[int, Query(ge=1, le=1000)]
+
+
+def _history_or_404(coin_id: str, limit: int):
+    df = coin_history(coin_id, limit)
+    if df.empty:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Coin not found")
+    return df
+
+
+def _sparkline(values: list, width: int = 300, height: int = 80) -> str | None:
+    """SVG polyline points for the non-null values, or None if there are fewer than 2."""
+    pts = [(i, v) for i, v in enumerate(values) if v is not None and not math.isnan(v)]
+    if len(pts) < 2:
+        return None
+    lo = min(v for _, v in pts)
+    hi = max(v for _, v in pts)
+    span = (hi - lo) or 1.0
+    x_step = width / max(len(values) - 1, 1)
+    pad = 4
+    return " ".join(
+        f"{i * x_step:.1f},{pad + (height - 2 * pad) * (1 - (v - lo) / span):.1f}" for i, v in pts
+    )
+
+
+@app.get("/api/coins/{coin_id}/history", dependencies=[Depends(require_auth)])
+async def coin_history_api(coin_id: str, limit: _HistoryLimit = 200):
+    df = _history_or_404(coin_id, limit)
+    rows = [{k: _clean(v) for k, v in r.items()} for r in df.to_dict(orient="records")]
+    latest = rows[-1]
+    return {
+        "coin_id": latest["coin_id"],
+        "symbol": latest["symbol"],
+        "name": latest["name"],
+        "count": len(rows),
+        "results": rows,
+    }
+
+
+@app.get("/coin/{coin_id}", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
+async def coin_page(request: Request, coin_id: str, limit: _HistoryLimit = 200):
+    df = _history_or_404(coin_id, limit)
+    display = _rows_for_display(df)
+    latest = display[-1]
+    charts = []
+    for title, col in [
+        ("Price", "current_price"),
+        ("Volume", "total_volume"),
+        ("Volume surge", "volume_surge"),
+    ]:
+        values = [_clean(v) for v in df[col].tolist()]
+        present = [v for v in values if v is not None]
+        charts.append({
+            "title": title,
+            "points": _sparkline(values),
+            "range": (
+                f"{_format_number(min(present))} – {_format_number(max(present))}" if present else ""
+            ),
+            "width": 300,
+            "height": 80,
+        })
+    return TEMPLATES.TemplateResponse(
+        request,
+        "coin.html",
+        {
+            "coin": latest,
+            "latest": latest,
+            "charts": charts,
+            "rows": list(reversed(display))[:100],
+            "count": len(display),
+            "first_at": display[0]["fetched_at"],
+        },
+    )
 
 
 @app.get("/healthz")

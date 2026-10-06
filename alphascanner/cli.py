@@ -9,14 +9,27 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from .alerts import (
+    InvalidWebhookURL,
+    UnknownPreset,
+    check_alerts,
+    delete_alert,
+    list_alerts,
+    mask_url,
+    set_alert,
+)
 from .db import init_db
 from .fetcher import run_fetch
 from .presets import InvalidPresetName, delete_preset, get_preset, list_presets, save_preset
-from .scanner import FilterParams, ScreenQuery, scan
+from .scanner import FilterParams, ScreenQuery, coin_history, scan
 
 app = typer.Typer(help="AlphaScanner — altcoin opportunity screener", no_args_is_help=True)
 preset_app = typer.Typer(help="Manage saved screens (filter presets).", no_args_is_help=True)
 app.add_typer(preset_app, name="preset")
+alert_app = typer.Typer(
+    help="Webhook alerts when coins start matching a saved preset.", no_args_is_help=True
+)
+app.add_typer(alert_app, name="alert")
 console = Console()
 
 
@@ -139,6 +152,34 @@ def screen(
     console.print(table)
 
 
+@app.command()
+def history(
+    coin_id: str = typer.Argument(..., help="CoinGecko coin id, e.g. bitcoin"),
+    limit: int = typer.Option(20, min=1, max=1000, help="Most recent snapshots to show"),
+):
+    """Show one coin's snapshot history, newest first."""
+    init_db()
+    df = coin_history(coin_id, limit)
+    if df.empty:
+        console.print(f"[red]No snapshots for {escape(repr(coin_id))}.[/red]")
+        raise typer.Exit(1)
+    latest = df.iloc[-1]
+    table = Table(title=f"{escape(str(latest['name']))} ({escape(str(latest['symbol']).upper())})")
+    cols = [
+        ("fetched_at", "Snapshot"),
+        ("current_price", "Price"),
+        ("price_change_pct_24h", "24h %"),
+        ("total_volume", "Volume"),
+        ("volume_surge", "Vol surge"),
+        ("market_cap", "Mkt cap"),
+    ]
+    for _, label in cols:
+        table.add_column(label)
+    for _, row in df.iloc[::-1].iterrows():
+        table.add_row(*[_fmt(row[c]) for c, _ in cols])
+    console.print(table)
+
+
 @preset_app.command("list")
 def preset_list():
     """List saved presets."""
@@ -169,6 +210,83 @@ def preset_delete(name: str):
         raise typer.Exit(1)
     console.print(f"[green]Deleted preset {escape(repr(name))}.[/green]")
 
+
+
+@alert_app.command("set")
+def alert_set(
+    preset: str = typer.Argument(..., help="Name of a saved preset"),
+    webhook_url: str = typer.Argument(..., help="URL to POST notifications to"),
+):
+    """Alert on a preset (or change an existing alert's webhook)."""
+    init_db()
+    try:
+        set_alert(preset, webhook_url)
+    except UnknownPreset:
+        console.print(f"[red]No preset named {escape(repr(preset))}.[/red]")
+        raise typer.Exit(1) from None
+    except InvalidWebhookURL as exc:
+        console.print(f"[red]{escape(str(exc))}[/red]")
+        raise typer.Exit(1) from None
+    console.print(
+        f"[green]Alert set on preset {escape(repr(preset))} -> {escape(mask_url(webhook_url))}.[/green]"
+    )
+
+
+@alert_app.command("list")
+def alert_list():
+    """List alerts and their last check."""
+    init_db()
+    alerts = list_alerts()
+    if not alerts:
+        console.print(
+            "[yellow]No alerts yet. Add one with `alphascanner alert set PRESET URL`.[/yellow]"
+        )
+        return
+    table = Table(title="Alerts")
+    for col in ["Preset", "Webhook", "Matching", "Last checked", "Last notified", "Last error"]:
+        table.add_column(col)
+    for a in alerts:
+        table.add_row(
+            a.preset_name,
+            escape(mask_url(a.webhook_url)),
+            str(len(a.last_matched)),
+            a.last_checked_at or "-",
+            a.last_notified_at or "-",
+            escape(a.last_error or "-"),
+        )
+    console.print(table)
+
+
+@alert_app.command("delete")
+def alert_delete(preset: str):
+    """Remove the alert on a preset (the preset itself is kept)."""
+    init_db()
+    if not delete_alert(preset):
+        console.print(f"[red]No alert on preset {escape(repr(preset))}.[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Deleted alert on preset {escape(repr(preset))}.[/green]")
+
+
+@alert_app.command("check")
+def alert_check():
+    """Check every alert against the latest snapshot now, sending webhooks for new matches."""
+    init_db()
+    results = check_alerts()
+    if not results:
+        console.print("[yellow]No alerts to check (or no snapshot data yet).[/yellow]")
+        return
+    failed = False
+    for r in results:
+        name = escape(repr(r.preset_name))
+        if r.error:
+            failed = True
+            console.print(f"[red]{name}: {r.new} new match(es), delivery failed: {escape(r.error)}[/red]")
+        elif r.delivered:
+            console.print(f"[green]{name}: notified {r.new} new match(es) ({r.matched} matching).[/green]")
+        else:
+            console.print(f"{name}: no new matches ({r.matched} matching).")
+    if failed:
+        raise typer.Exit(1)
 
 if __name__ == "__main__":
     app()

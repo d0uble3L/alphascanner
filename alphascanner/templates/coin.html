@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}{{ coin.symbol|upper }} · AlphaScanner{% endblock %}
+{% block content %}
+<header>
+  <h1>{{ coin.name }} <span class="tag">{{ coin.symbol|upper }}</span></h1>
+  <a class="back" href="/">← back to screener</a>
+</header>
+
+<div class="stats">
+  <div class="stat"><div class="label">Price</div><div class="value">{{ latest.price_fmt }}</div></div>
+  <div class="stat"><div class="label">24h %</div>
+    <div class="value {{ 'up' if (latest.price_change_pct_24h or 0) > 0 else 'down' if (latest.price_change_pct_24h or 0) < 0 else '' }}">{{ latest.chg24h_fmt }}</div></div>
+  <div class="stat"><div class="label">Volume</div><div class="value">{{ latest.volume_fmt }}</div></div>
+  <div class="stat"><div class="label">Vol surge</div><div class="value">{{ latest.surge_fmt }}</div></div>
+  <div class="stat"><div class="label">Mkt cap</div><div class="value">{{ latest.mcap_fmt }}</div></div>
+  <div class="stat"><div class="label">From ATH %</div><div class="value">{{ latest.ath_fmt }}</div></div>
+</div>
+
+<div class="charts">
+  {% for chart in charts %}
+  <div class="chart">
+    <h2><span>{{ chart.title }}</span><span>{{ chart.range }}</span></h2>
+    {% if chart.points %}
+    <svg viewBox="0 0 {{ chart.width }} {{ chart.height }}" preserveAspectRatio="none" role="img" aria-label="{{ chart.title }} over time">
+      <polyline points="{{ chart.points }}" />
+    </svg>
+    {% else %}
+    <div class="none">Not enough data to chart yet</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+<div class="panel">
+  <div class="meta">
+    <span>{{ count }} snapshot{{ '' if count == 1 else 's' }} · {{ first_at }} → {{ latest.fetched_at }}</span>
+    <span>newest first</span>
+  </div>
+  <table class="history">
+    <thead>
+      <tr>
+        <th>Snapshot</th>
+        <th>Price</th>
+        <th>1h %</th>
+        <th>24h %</th>
+        <th>Volume</th>
+        <th>Vol surge</th>
+        <th>Mkt cap</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.fetched_at }}</td>
+        <td>{{ r.price_fmt }}</td>
+        <td class="{{ 'up' if (r.price_change_pct_1h or 0) > 0 else 'down' if (r.price_change_pct_1h or 0) < 0 else '' }}">{{ r.chg1h_fmt }}</td>
+        <td class="{{ 'up' if (r.price_change_pct_24h or 0) > 0 else 'down' if (r.price_change_pct_24h or 0) < 0 else '' }}">{{ r.chg24h_fmt }}</td>
+        <td>{{ r.volume_fmt }}</td>
+        <td>{{ r.surge_fmt }}</td>
+        <td>{{ r.mcap_fmt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
