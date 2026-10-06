@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 
 from .config import settings
 from .db import connect, init_db
-from .presets import InvalidPresetName, delete_preset, get_preset, list_presets, save_preset
+from .presets import InvalidPresetName, delete_preset, list_presets, save_preset
 from .scanner import ScreenQuery, scan
 
 log = logging.getLogger(__name__)
@@ -141,7 +141,10 @@ def _resolve_query(q: ScreenQuery, preset: str | None) -> ScreenQuery:
     """A named preset, when given, replaces the filter params entirely."""
     if preset is None:
         return q
-    saved = get_preset(preset)
+    # Match the request value against stored names in Python instead of passing it
+    # to SQL: the presets table is tiny, and this keeps untrusted input out of the
+    # database layer entirely.
+    saved = next((p for p in list_presets() if p.name == preset), None)
     if saved is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Preset not found")
     return saved.query

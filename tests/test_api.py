@@ -196,3 +196,24 @@ def test_preset_param_injection_payload_is_just_not_found(client):
     assert client.get("/api/screen", params={"preset": payload}).status_code == 404
     assert client.delete(f"/api/presets/{payload}").status_code == 404
     assert [p["name"] for p in client.get("/api/presets").json()] == ["keep"]
+
+
+def test_preset_param_value_never_reaches_sql(client, monkeypatch):
+    import sqlite3
+
+    client.put("/api/presets/keep", json={"limit": 5})
+    seen_params = []
+    real_connect = sqlite3.connect
+
+    class RecordingConnection(sqlite3.Connection):
+        def execute(self, sql, params=(), /):
+            seen_params.append(params)
+            return super().execute(sql, params)
+
+    monkeypatch.setattr(
+        sqlite3, "connect", lambda *a, **k: real_connect(*a, factory=RecordingConnection, **k)
+    )
+    client.get("/api/screen", params={"preset": "keep"})
+    client.get("/api/screen", params={"preset": "probe-value"})
+    assert seen_params, "recorder saw no queries"
+    assert not any("keep" in p or "probe-value" in p for p in seen_params if isinstance(p, tuple))
