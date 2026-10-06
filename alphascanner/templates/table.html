@@ -52,8 +52,8 @@
   <tbody>
     {% for r in rows %}
     <tr>
-      <td>{{ r.symbol|upper }}</td>
-      <td>{{ r.name }}</td>
+      <td><a href="/coin/{{ r.coin_id|urlencode }}">{{ r.symbol|upper }}</a></td>
+      <td><a href="/coin/{{ r.coin_id|urlencode }}">{{ r.name }}</a></td>
       <td>{{ r.price_fmt }}</td>
       <td class="{{ 'up' if (r.price_change_pct_1h or 0) > 0 else 'down' if (r.price_change_pct_1h or 0) < 0 else '' }}">{{ r.chg1h_fmt }}</td>
       <td class="{{ 'up' if (r.price_change_pct_24h or 0) > 0 else 'down' if (r.price_change_pct_24h or 0) < 0 else '' }}">{{ r.chg24h_fmt }}</td>

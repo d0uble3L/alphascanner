@@ -12,7 +12,7 @@ from rich.table import Table
 from .db import init_db
 from .fetcher import run_fetch
 from .presets import InvalidPresetName, delete_preset, get_preset, list_presets, save_preset
-from .scanner import FilterParams, ScreenQuery, scan
+from .scanner import FilterParams, ScreenQuery, coin_history, scan
 
 app = typer.Typer(help="AlphaScanner — altcoin opportunity screener", no_args_is_help=True)
 preset_app = typer.Typer(help="Manage saved screens (filter presets).", no_args_is_help=True)
@@ -135,6 +135,34 @@ def screen(
     for _, label in cols:
         table.add_column(label)
     for _, row in df.iterrows():
+        table.add_row(*[_fmt(row[c]) for c, _ in cols])
+    console.print(table)
+
+
+@app.command()
+def history(
+    coin_id: str = typer.Argument(..., help="CoinGecko coin id, e.g. bitcoin"),
+    limit: int = typer.Option(20, min=1, max=1000, help="Most recent snapshots to show"),
+):
+    """Show one coin's snapshot history, newest first."""
+    init_db()
+    df = coin_history(coin_id, limit)
+    if df.empty:
+        console.print(f"[red]No snapshots for {escape(repr(coin_id))}.[/red]")
+        raise typer.Exit(1)
+    latest = df.iloc[-1]
+    table = Table(title=f"{escape(str(latest['name']))} ({escape(str(latest['symbol']).upper())})")
+    cols = [
+        ("fetched_at", "Snapshot"),
+        ("current_price", "Price"),
+        ("price_change_pct_24h", "24h %"),
+        ("total_volume", "Volume"),
+        ("volume_surge", "Vol surge"),
+        ("market_cap", "Mkt cap"),
+    ]
+    for _, label in cols:
+        table.add_column(label)
+    for _, row in df.iloc[::-1].iterrows():
         table.add_row(*[_fmt(row[c]) for c, _ in cols])
     console.print(table)
 

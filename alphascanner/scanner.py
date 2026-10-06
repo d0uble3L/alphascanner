@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
@@ -91,6 +92,35 @@ def historical_avg_volume() -> pd.DataFrame:
             params=history,
         )
     return df
+
+
+# CoinGecko coin ids are short slugs like "bitcoin" or "usd-coin".
+COIN_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
+
+
+def coin_history(coin_id: str, limit: int = 200) -> pd.DataFrame:
+    """One coin's snapshots, oldest first, each with its own volume_surge.
+
+    Surge for a snapshot is its volume over the mean of the coin's previous
+    `history_window` snapshots, so the newest row matches the main screen's
+    surge whenever the coin is present in every snapshot.
+    """
+    if not COIN_ID_RE.fullmatch(coin_id):
+        return pd.DataFrame()
+    with connect() as conn:
+        # Fetch extra rows so even the oldest returned row has a full baseline.
+        df = pd.read_sql_query(
+            "SELECT * FROM snapshots WHERE coin_id = ? ORDER BY fetched_at DESC LIMIT ?",
+            conn,
+            params=(coin_id, limit + settings.history_window),
+        )
+    if df.empty:
+        return df
+    df = df.iloc[::-1].reset_index(drop=True)
+    baseline = df["total_volume"].shift(1).rolling(settings.history_window, min_periods=1).mean()
+    df["avg_volume"] = baseline
+    df["volume_surge"] = df["total_volume"] / baseline.replace(0, float("nan"))
+    return df.tail(limit).reset_index(drop=True)
 
 
 def with_volume_surge(latest: pd.DataFrame, avg: pd.DataFrame) -> pd.DataFrame:
