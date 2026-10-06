@@ -2,6 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from .alerts import check_alerts
 from .config import settings
 from .db import init_db
 from .fetcher import run_fetch
@@ -36,6 +37,13 @@ async def main() -> None:
             log.info("Stored %d coins at %s", n, ts)
         except Exception:
             log.exception("Fetch failed")
+        else:
+            try:
+                for r in await asyncio.to_thread(check_alerts):
+                    if r.delivered:
+                        log.info("Alert %r: notified %d new match(es)", r.preset_name, r.new)
+            except Exception:
+                log.exception("Alert check failed")
         _touch_heartbeat()
         await asyncio.sleep(interval)
 
