@@ -1,45 +1,23 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<title>AlphaScanner</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<script src="https://unpkg.com/htmx.org@2.0.3" integrity="sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" crossorigin="anonymous"></script>
-<style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 1.25rem; background: #0a0a0c; color: #e6e6e6; }
-  header { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 1rem; }
-  h1 { color: #5fafff; margin: 0; font-size: 1.5rem; }
-  header .tag { color: #777; font-size: 0.85rem; }
-  form.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; padding: 1rem; background: #15161a; border: 1px solid #23252b; border-radius: 8px; margin-bottom: 1rem; }
-  form.filters label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; color: #9aa; text-transform: uppercase; letter-spacing: 0.04em; }
-  form.filters input, form.filters select { padding: 0.45rem 0.55rem; background: #1c1d22; color: #e6e6e6; border: 1px solid #2a2c33; border-radius: 4px; font-size: 0.9rem; }
-  form.filters input:focus, form.filters select:focus { outline: none; border-color: #5fafff; }
-  #results { background: #15161a; border: 1px solid #23252b; border-radius: 8px; overflow: hidden; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-  thead th { padding: 0.6rem 0.75rem; text-align: right; color: #5fafff; background: #181a1f; border-bottom: 1px solid #2a2c33; position: sticky; top: 0; }
-  th:first-child, th:nth-child(2), td:first-child, td:nth-child(2) { text-align: left; }
-  td { padding: 0.5rem 0.75rem; text-align: right; border-bottom: 1px solid #1d1e23; }
-  tr:hover td { background: #1a1c20; }
-  .up { color: #4ade80; }
-  .down { color: #f87171; }
-  .meta { padding: 0.6rem 0.75rem; color: #777; font-size: 0.8rem; border-bottom: 1px solid #23252b; display: flex; justify-content: space-between; }
-  .empty { padding: 2rem; text-align: center; color: #777; }
-  .empty code { background: #1d1e23; padding: 0.15rem 0.4rem; border-radius: 3px; color: #cce; }
-  .banner { padding: 0.75rem 1rem; font-size: 0.85rem; border-radius: 6px 6px 0 0; border-bottom: 1px solid; }
-  .banner code { padding: 0.1rem 0.35rem; border-radius: 3px; font-size: 0.82rem; }
-  .banner.warn { background: #2a2200; border-color: #554400; color: #f5c842; }
-  .banner.warn code { background: #1e1800; color: #f5c842; }
-  .banner.error { background: #220a0a; border-color: #441010; color: #f87171; }
-  .banner.error code { background: #1a0808; color: #f87171; }
-</style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block content %}
 <header>
   <h1>AlphaScanner</h1>
   <span class="tag">altcoin opportunity screener</span>
 </header>
+
+<div class="presets">
+  <label for="preset-select">Preset</label>
+  <select id="preset-select">
+    <option value="">— custom —</option>
+    {% for p in presets %}
+    <option value="{{ p.name }}" data-params="{{ p.query.model_dump_json() }}">{{ p.name }}</option>
+    {% endfor %}
+  </select>
+  <input id="preset-name" placeholder="Save current filters as…" maxlength="64">
+  <button type="button" id="preset-save">Save</button>
+  <button type="button" id="preset-delete">Delete</button>
+  <span id="preset-msg" class="msg" role="status"></span>
+</div>
 
 <form class="filters"
       hx-get="/screen"
@@ -91,5 +69,80 @@
      hx-include="form.filters">
   <div class="empty">Loading…</div>
 </div>
-</body>
-</html>
+
+<script>
+(() => {
+  const form = document.querySelector("form.filters");
+  const select = document.getElementById("preset-select");
+  const nameInput = document.getElementById("preset-name");
+  const msg = document.getElementById("preset-msg");
+
+  function say(text, isError = false) {
+    msg.textContent = text;
+    msg.classList.toggle("error", isError);
+  }
+
+  function formParams() {
+    const params = {};
+    for (const [key, value] of new FormData(form)) params[key] = value === "" ? null : value;
+    return params;
+  }
+
+  function errorText(body) {
+    // Pydantic validation errors come back as a list; our own errors as a string.
+    if (typeof body.detail === "string") return body.detail;
+    if (Array.isArray(body.detail)) {
+      return body.detail.map((e) => `${e.loc[e.loc.length - 1]}: ${e.msg}`).join("; ");
+    }
+    return "Request failed.";
+  }
+
+  select.addEventListener("change", () => {
+    const option = select.selectedOptions[0];
+    if (!option.value) return;
+    const params = JSON.parse(option.dataset.params);
+    for (const [key, value] of Object.entries(params)) {
+      const field = form.elements.namedItem(key);
+      if (field) field.value = value ?? "";
+    }
+    form.requestSubmit();
+    say(`Loaded "${option.value}".`);
+  });
+
+  document.getElementById("preset-save").addEventListener("click", async () => {
+    // A blank name re-saves (overwrites) the currently selected preset.
+    const name = nameInput.value.trim() || select.value;
+    if (!name) return say("Enter a name to save these filters.", true);
+    const resp = await fetch(`/api/presets/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(formParams()),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) return say(errorText(body), true);
+
+    let option = [...select.options].find((o) => o.value === body.name);
+    if (!option) {
+      option = new Option(body.name, body.name);
+      select.add(option);
+    }
+    option.dataset.params = JSON.stringify(body.params);
+    select.value = body.name;
+    nameInput.value = "";
+    say(`Saved "${body.name}".`);
+  });
+
+  document.getElementById("preset-delete").addEventListener("click", async () => {
+    const name = select.value;
+    if (!name) return say("Select a preset to delete.", true);
+    const resp = await fetch(`/api/presets/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!resp.ok && resp.status !== 404) {
+      return say(errorText(await resp.json().catch(() => ({}))), true);
+    }
+    select.selectedOptions[0].remove();
+    select.value = "";
+    say(`Deleted "${name}".`);
+  });
+})();
+</script>
+{% endblock %}

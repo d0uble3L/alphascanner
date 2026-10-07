@@ -71,8 +71,10 @@ docker compose ps   # both services should reach "healthy" within ~30s
 ```
 
 `web` is checked via `GET /healthz`; `scheduler` has no HTTP endpoint, so it's
-checked via a heartbeat file (`/data/scheduler.heartbeat`) touched after every
-fetch loop iteration — a wedged scheduler shows as `unhealthy` within an hour.
+checked via a heartbeat file touched after every fetch loop iteration — a
+wedged scheduler shows as `unhealthy` within an hour. The file sits next to the
+database (`/data/scheduler.heartbeat` in Docker, `./data/scheduler.heartbeat`
+for local runs).
 
 ## Signals
 
@@ -92,17 +94,120 @@ On a fresh DB, volume surge is `null` until at least two snapshots exist.
 alphascanner init                   # create db
 alphascanner fetch                  # one snapshot from CoinGecko
 alphascanner screen [OPTIONS]       # rank latest snapshot
+alphascanner preset list            # show saved presets
+alphascanner preset delete NAME     # remove a saved preset
+alphascanner history COIN_ID        # one coin's snapshot history
+alphascanner alert set PRESET URL   # webhook alert when coins start matching a preset
+alphascanner alert list             # alerts and their last check/notification/error
+alphascanner alert check            # check alerts now (the scheduler does this every fetch)
+alphascanner alert delete PRESET    # remove an alert (keeps the preset)
 ```
 
 `screen` flags: `--sort-by`, `--limit`, `--min-market-cap`, `--max-market-cap`,
 `--min-volume`, `--min-pct-change-{1h,24h,7d}`, `--min-volume-surge`,
-`--near-ath-pct`.
+`--near-ath-pct`, plus `--save-as NAME` and `--preset NAME`.
+
+### Presets
+
+Save a set of filters under a name instead of retyping the flags:
+
+```bash
+alphascanner screen --min-volume-surge 2 --max-market-cap 500000000 --save-as small-cap-surge
+alphascanner screen --preset small-cap-surge     # rerun it later
+```
+
+`--preset` runs the saved filters as-is; any other filter flags are ignored.
+Names are 1–64 characters (letters, digits, `-`, `_`). Saving an existing name
+overwrites it. Presets are validated the same way as API requests, so anything
+saved from the CLI also works in the web UI and API, and vice versa.
+
+In the web UI, the **Preset** bar above the filters loads a saved preset into
+the form, saves the current filters (leave the name blank to overwrite the
+selected preset), or deletes one.
+
+### Alerts
+
+Attach a webhook to a saved preset and get notified when coins *start*
+matching it, instead of keeping the dashboard open:
+
+```bash
+alphascanner screen --min-volume-surge 3 --max-market-cap 500000000 --save-as surge3
+alphascanner alert set surge3 https://hooks.slack.com/services/T000/B000/XXXX
+```
+
+The scheduler checks every alert after each successful fetch. It POSTs only
+coins that weren't matching on the previous check, so a coin that stays in
+the screen notifies once; if it drops out and comes back, it notifies again.
+A new alert starts from whatever matches when you create it, so you hear
+about coins that start matching *after* that, not a dump of everything at
+once. "Matching" means passing the preset's filters; the preset's `limit`
+only caps how many coins one notification lists, so coins trading places in
+the ranking don't trigger anything.
+If a delivery fails (non-2xx response, timeout), the error shows in
+`alphascanner alert list` and the same coins are retried on the next check.
+Running `alphascanner alert check` while the scheduler is checking won't
+send anything twice. Deleting a preset deletes its alert.
+
+The POST body is JSON with a `text` summary, so it renders as-is in a Slack
+(or Slack-compatible) incoming webhook. The other fields are for anything
+custom:
+
+```json
+{
+  "text": "AlphaScanner: 2 new matches for preset 'surge3': ABC, XYZ",
+  "preset": "surge3",
+  "fetched_at": "2026-10-06T21:07:47+00:00",
+  "match_count": 5,
+  "new_count": 2,
+  "new_matches": [
+    {"coin_id": "...", "symbol": "...", "name": "...", "current_price": 0.42,
+     "price_change_pct_24h": 18.2, "total_volume": 9200000,
+     "volume_surge": 3.4, "market_cap": 310000000}
+  ]
+}
+```
+
+Because the server makes these requests, webhook URLs must be `http(s)` and
+must resolve to **public** addresses. Private, loopback, and link-local hosts
+(e.g. cloud metadata endpoints) are rejected when the alert is saved and again
+at send time, and redirects aren't followed. The request then connects to the
+exact address that was checked, so a DNS change between check and connect
+(DNS rebinding) can't redirect it. If the server reaches the internet through
+an `HTTPS_PROXY`, the proxy resolves the host instead. To post to something
+on your own network (say, a local n8n), set
+`ALPHASCANNER_ALERTS_ALLOW_PRIVATE_WEBHOOKS=true`.
+
+Without `ALPHASCANNER_AUTH_PASSWORD`, anyone who can reach the web server can
+create alerts, and the server logs a warning at startup saying so.
+Webhook URLs often embed a secret token, so listings show only the host.
+
+### Coin history
+
+Click any coin in the dashboard (or open `/coin/COIN_ID`) for its price,
+volume, and volume-surge charts across every stored snapshot. From the CLI:
+`alphascanner history bitcoin --limit 50`. Each snapshot's volume surge is
+computed against the coin's average volume over the previous
+`ALPHASCANNER_HISTORY_WINDOW` snapshots (skipping any it was missing from),
+the same baseline the dashboard uses, so the newest value matches it.
 
 ## API
 
 - `GET /` — HTMX dashboard
 - `GET /screen` — HTML table fragment (HTMX target)
-- `GET /api/screen` — JSON, same query params as the CLI
+- `GET /api/screen` — JSON, same query params as the CLI; add `?preset=NAME`
+  to run a saved preset instead (the other params are then ignored)
+- `GET /api/presets` — list saved presets
+- `PUT /api/presets/{name}` — create/overwrite a preset; JSON body takes the
+  same fields as `/api/screen`'s query params
+- `DELETE /api/presets/{name}` — delete a preset (`204`, or `404` if missing)
+- `GET /coin/{coin_id}` — coin history page
+- `GET /api/coins/{coin_id}/history?limit=N` — same data as JSON, oldest
+  first (`limit` 1–1000, default 200)
+- `GET /api/alerts` — list alerts (webhook URLs masked to the host)
+- `PUT /api/alerts/{preset}` — create an alert or change its webhook; JSON
+  body `{"webhook_url": "https://..."}` (`404` if the preset doesn't exist,
+  `422` for a rejected URL, including a bad port)
+- `DELETE /api/alerts/{preset}` — remove an alert (`204`, or `404`)
 - `GET /healthz`
 
 ## Configuration
@@ -119,18 +224,21 @@ generous default — fine for localhost-only use. If you expose this beyond
 localhost:
 
 - Set `ALPHASCANNER_AUTH_PASSWORD` (and optionally `ALPHASCANNER_AUTH_USERNAME`,
-  default `admin`) to require HTTP Basic Auth on `/`, `/screen`, and
-  `/api/screen`. `/healthz` is always open (docker-compose's healthcheck
-  depends on it).
+  default `admin`) to require HTTP Basic Auth on every route except
+  `/healthz`, which is always open (docker-compose's healthcheck depends on
+  it).
 - `ALPHASCANNER_RATE_LIMIT_PER_MINUTE` (default 60) caps requests per client
   IP to those same routes; excess requests get a `429`. The limiter is
   in-memory and per-process, so it resets on restart and isn't shared across
   multiple workers/replicas.
 
+`ALPHASCANNER_ALERTS_ALLOW_PRIVATE_WEBHOOKS` (default `false`) lets alert
+webhooks target private/local addresses; see [Alerts](#alerts).
+
 ## Tests
 
 ```bash
-pytest                                              # 44 tests: pure logic + db/api/cli/scheduler
+pytest                                              # logic, db, api, cli, scheduler, presets, alerts, history
 ruff check .                                        # lint
 bandit -r alphascanner/ -ll -x alphascanner/templates  # security static analysis
 ```
@@ -145,7 +253,9 @@ alphascanner/
   config.py     # pydantic-settings
   db.py         # sqlite schema + connection
   fetcher.py    # CoinGecko client + insert
-  scanner.py    # ranking / filter logic (pure pandas)
+  scanner.py    # ranking / filter logic (pure pandas) + ScreenQuery validation
+  presets.py    # saved filter presets
+  alerts.py     # webhook alerts on presets (checked by the scheduler)
   cli.py        # Typer
   api.py        # FastAPI
   scheduler.py  # async loop

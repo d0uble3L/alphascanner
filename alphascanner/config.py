@@ -23,5 +23,10 @@ class Settings(BaseSettings):
     auth_password: str | None = None
     rate_limit_per_minute: int = 60
 
+    # Alert webhooks are POSTed to by the server, so by default they must
+    # resolve to public addresses (blocks SSRF into internal services). Enable
+    # to target something on your own network, e.g. a local n8n instance.
+    alerts_allow_private_webhooks: bool = False
+
 
 settings = Settings()

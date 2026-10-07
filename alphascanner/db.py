@@ -36,6 +36,21 @@ CREATE TABLE IF NOT EXISTS fetch_log (
     status_code INTEGER,
     message TEXT
 );
+CREATE TABLE IF NOT EXISTS presets (
+    name TEXT PRIMARY KEY,
+    params TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alerts (
+    preset_name TEXT PRIMARY KEY REFERENCES presets(name) ON DELETE CASCADE,
+    webhook_url TEXT NOT NULL,
+    last_matched TEXT NOT NULL DEFAULT '[]',
+    last_checked_at TEXT,
+    last_notified_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -57,6 +72,8 @@ def connect(db_path: str | None = None):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
+    # Off by default in SQLite; needed so deleting a preset cascades to its alert.
+    conn.execute("PRAGMA foreign_keys=ON")
     try:
         yield conn
         conn.commit()
