@@ -75,23 +75,19 @@ def latest_snapshot_df() -> tuple[pd.DataFrame, str | None]:
 
 def historical_avg_volume() -> pd.DataFrame:
     """Average volume per coin across the most recent N snapshots, excluding the newest."""
+    # A fixed query with only bound parameters: no SQL text is ever built at
+    # runtime. OFFSET 1 skips the newest snapshot; with fewer than two
+    # snapshots the subquery is empty, so no coin gets an average.
     with connect() as conn:
-        ts_rows = conn.execute(
-            "SELECT DISTINCT fetched_at FROM snapshots ORDER BY fetched_at DESC LIMIT ?",
-            (settings.history_window + 1,),
-        ).fetchall()
-        timestamps = [r[0] for r in ts_rows]
-        if len(timestamps) < 2:
-            return pd.DataFrame(columns=["coin_id", "avg_volume"])
-        history = timestamps[1:]
-        placeholders = ",".join("?" for _ in history)
-        df = pd.read_sql_query(
-            f"SELECT coin_id, AVG(total_volume) AS avg_volume FROM snapshots "  # nosec B608
-            f"WHERE fetched_at IN ({placeholders}) GROUP BY coin_id",
+        return pd.read_sql_query(
+            "SELECT coin_id, AVG(total_volume) AS avg_volume FROM snapshots "
+            "WHERE fetched_at IN ("
+            "  SELECT DISTINCT fetched_at FROM snapshots "
+            "  ORDER BY fetched_at DESC LIMIT ? OFFSET 1"
+            ") GROUP BY coin_id",
             conn,
-            params=history,
+            params=(settings.history_window,),
         )
-    return df
 
 
 # CoinGecko coin ids are short slugs like "bitcoin" or "usd-coin".
