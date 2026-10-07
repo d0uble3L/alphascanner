@@ -13,8 +13,9 @@ Recently shipped:
 - **Alerts in the web UI** (sprint 2, item 1; the PR adding this update): an
   Alerts panel under the preset bar to set an alert on the selected preset,
   see each alert's masked webhook, last check, last notification, and last
-  error, and delete alerts. It refreshes every minute and opens on its own
-  with a red count when an alert is failing
+  error, and delete alerts. It refreshes every minute; the header shows a
+  red count while an alert is failing, and the panel opens on its own when a
+  new failure appears
 - **Alert + history hardening** (#31), from a code review of #30:
   - Alerts compare every coin passing a preset's filters, not just its top
     `limit`, so rank changes no longer trigger notifications. The limit now
@@ -50,13 +51,14 @@ Recently shipped:
   pandas 3.0.6, idna 3.20, starlette 1.7.0); the test suite passes on them
 - Snyk's Python 3.15 RC base-image PR (#29) closed unmerged; the Dockerfile
   stays on `python:3.12-alpine`
+- GitHub Actions bumps merged (#11 `actions/checkout` 7, #13
+  `actions/setup-python` 7)
 
 In flight — awaiting review/approval to merge (branch protection requires 1
 approval):
 
 - `.env.example` local-setup fix (#16), green on CI
-- 3 Dependabot PRs bumping GitHub Actions versions (#5, #11, #13) — pure CI
-  version bumps, no app code touched, green on CI
+- Dependabot bump of `github/codeql-action` to v4 (#5), CI-only
 
 ## Done (sprint 1)
 

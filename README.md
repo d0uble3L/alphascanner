@@ -139,8 +139,8 @@ Or in the web UI: open **Alerts** under the preset bar, select the preset,
 paste the webhook URL, and click **Set alert**. The panel lists every alert
 with its masked webhook, last check, last notification, and last error, and
 has a Delete button for each. It refreshes every minute. When an alert is
-failing, the panel header turns red and the panel opens on its own, so you
-see the problem without expanding it.
+failing, the panel header shows a red count, and the panel opens on its own
+when a new failure appears, so you see the problem without expanding it.
 
 The scheduler checks every alert after each successful fetch. It POSTs only
 coins that weren't matching on the previous check, so a coin that stays in

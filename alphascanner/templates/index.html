@@ -157,16 +157,26 @@
     alertMsg.classList.toggle("error", isError);
   }
 
+  async function send(url, options) {
+    try {
+      return await fetch(url, options);
+    } catch {
+      sayAlert("Couldn't reach the server. Check your connection and try again.", true);
+      return null;
+    }
+  }
+
   document.getElementById("alert-set").addEventListener("click", async () => {
     const name = select.value;
     if (!name) return sayAlert("Select a saved preset first.", true);
     const url = alertUrl.value.trim();
     if (!url) return sayAlert("Paste the webhook URL to notify.", true);
-    const resp = await fetch(`/api/alerts/${encodeURIComponent(name)}`, {
+    const resp = await send(`/api/alerts/${encodeURIComponent(name)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ webhook_url: url }),
     });
+    if (!resp) return;
     const body = await resp.json().catch(() => ({}));
     if (!resp.ok) return sayAlert(errorText(body), true);
     alertUrl.value = "";  // the full URL may hold a secret token; don't leave it on screen
@@ -178,7 +188,8 @@
     const button = event.target.closest("button.alert-delete");
     if (!button) return;
     const name = button.dataset.preset;
-    const resp = await fetch(`/api/alerts/${encodeURIComponent(name)}`, { method: "DELETE" });
+    const resp = await send(`/api/alerts/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!resp) return;
     if (!resp.ok && resp.status !== 404) {
       return sayAlert(errorText(await resp.json().catch(() => ({}))), true);
     }
@@ -187,6 +198,9 @@
   });
 
   // Keep the panel's header in sync so a failing alert is visible while it's collapsed.
+  // Open the panel only when more alerts are failing than at the last refresh, so it
+  // doesn't reopen every minute after you've collapsed it.
+  let lastFailing = 0;
   document.body.addEventListener("htmx:afterSwap", (event) => {
     if (event.detail.target.id !== "alerts") return;
     const rows = event.detail.target.querySelectorAll("tbody tr").length;
@@ -194,7 +208,8 @@
     const summary = document.getElementById("alerts-summary");
     summary.textContent = rows ? `${rows} active${failing ? `, ${failing} failing` : ""}` : "none";
     summary.classList.toggle("error", failing > 0);
-    if (failing) document.getElementById("alerts-panel").open = true;
+    if (failing > lastFailing) document.getElementById("alerts-panel").open = true;
+    lastFailing = failing;
   });
 
   document.getElementById("preset-delete").addEventListener("click", async () => {
