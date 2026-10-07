@@ -55,13 +55,14 @@ def webhook(monkeypatch, dns):
 
     rec = Recorder()
 
-    def fake_post(url, json=None, timeout=None):
+    def fake_post(url, payload, headers, extensions):
         if rec.error:
             raise rec.error
-        rec.calls.append({"url": url, "json": json})
+        rec.calls.append({"url": str(url), "json": payload, "headers": headers, "extensions": extensions})
         return httpx.Response(rec.status, request=httpx.Request("POST", url))
 
-    monkeypatch.setattr(alerts_module.httpx, "post", fake_post)
+    monkeypatch.setattr(alerts_module, "_http_post", fake_post)
+    monkeypatch.setattr(alerts_module, "_uses_proxy", lambda url: False)
     return rec
 
 
@@ -124,13 +125,19 @@ def test_rejects_unresolvable_host(dns):
         validate_webhook_url("https://nowhere.example/hook")
 
 
-def test_accepts_public_host(dns):
-    validate_webhook_url(HOOK)
+@pytest.mark.parametrize("url", ["https://hooks.example.com:99999/x", "https://hooks.example.com:abc/x"])
+def test_rejects_invalid_port(dns, url):
+    with pytest.raises(InvalidWebhookURL, match="port"):
+        validate_webhook_url(url)
+
+
+def test_accepts_public_host_and_returns_the_ip_to_pin(dns):
+    assert validate_webhook_url(HOOK) == "93.184.216.34"
 
 
 def test_private_hosts_allowed_when_opted_in(dns, monkeypatch):
     monkeypatch.setattr(settings, "alerts_allow_private_webhooks", True)
-    validate_webhook_url("http://localhost:5678/webhook")  # no DNS lookup at all
+    assert validate_webhook_url("http://localhost:5678/webhook") is None  # no DNS lookup at all
 
 
 # --- CRUD -------------------------------------------------------------------------
@@ -217,12 +224,15 @@ def test_payload_shape(db_path, webhook):
     _snapshot(db_path, "t1", [("bitcoin", 500)])
     check_alerts()
     call = webhook.calls[0]
-    assert call["url"] == HOOK
+    assert call["url"] == "https://93.184.216.34/services/T000/SECRET-TOKEN"  # pinned to checked IP
+    assert call["headers"] == {"Host": "hooks.example.com"}
+    assert call["extensions"] == {"sni_hostname": "hooks.example.com"}
     payload = call["json"]
     assert payload["text"] == "AlphaScanner: 1 new match for preset 'big': BIT"
     assert payload["preset"] == "big"
     assert payload["fetched_at"] == "t1"
     assert payload["match_count"] == 1
+    assert payload["new_count"] == 1
     match = payload["new_matches"][0]
     assert match["coin_id"] == "bitcoin"
     assert match["volume_surge"] is None  # NaN (single snapshot) serialized as null
@@ -281,6 +291,162 @@ def test_no_snapshot_data_means_nothing_to_check(db_path, webhook):
     assert webhook.calls == []
 
 
+def test_rank_changes_within_the_filters_do_not_notify(db_path, webhook):
+    # limit=1 shows only the top coin, but both pass the filters all along.
+    save_preset("top", ScreenQuery(min_volume=100, sort_by="volume", limit=1))
+    set_alert("top", HOOK)
+    _snapshot(db_path, "t1", [("bitcoin", 500), ("ethereum", 200)])
+    [r] = check_alerts()
+    assert (r.matched, r.new) == (2, 2)
+
+    _snapshot(db_path, "t2", [("bitcoin", 200), ("ethereum", 500)])  # swap ranks
+    [r] = check_alerts()
+    assert (r.new, r.delivered) == (0, False)
+    assert len(webhook.calls) == 1
+
+
+def test_payload_lists_at_most_the_preset_limit(db_path, webhook):
+    save_preset("top", ScreenQuery(min_volume=100, sort_by="volume", limit=1))
+    set_alert("top", HOOK)
+    _snapshot(db_path, "t1", [("bitcoin", 500), ("ethereum", 200)])
+    [r] = check_alerts()
+    assert r.new == 2
+    payload = webhook.calls[0]["json"]
+    assert payload["new_count"] == 2
+    assert _sent_ids(webhook) == ["bitcoin"]  # highest volume first
+    assert payload["text"].endswith(": BIT (+1 more)")
+
+
+def test_new_alert_starts_from_current_matches(db_path, webhook):
+    _big_volume_preset()
+    _snapshot(db_path, "t1", [("bitcoin", 500)])
+    set_alert("big", HOOK)
+    assert list_alerts()[0].last_matched == ["bitcoin"]
+
+    [r] = check_alerts()
+    assert (r.matched, r.new) == (1, 0)
+    assert webhook.calls == []
+
+    _snapshot(db_path, "t2", [("bitcoin", 500), ("ethereum", 200)])
+    check_alerts()
+    assert _sent_ids(webhook) == ["ethereum"]
+
+
+def test_changing_the_webhook_keeps_pending_matches(db_path, webhook):
+    _big_volume_preset()
+    set_alert("big", HOOK)
+    _snapshot(db_path, "t1", [("bitcoin", 500)])
+    webhook.status = 500
+    check_alerts()  # fails; bitcoin still pending
+
+    webhook.status = 200
+    other = "https://hooks.example.com/services/OTHER"
+    set_alert("big", other)
+    [a] = list_alerts()
+    assert a.last_matched == [] and a.last_error is None
+    check_alerts()
+    assert webhook.calls[-1]["url"].endswith("/services/OTHER")
+    assert _sent_ids(webhook) == ["bitcoin"]
+
+
+def test_one_failing_alert_does_not_stop_the_others(db_path, webhook, monkeypatch):
+    save_preset("a", ScreenQuery(min_volume=100))
+    save_preset("b", ScreenQuery(min_volume=100))
+    set_alert("a", HOOK)
+    set_alert("b", HOOK)
+    _snapshot(db_path, "t1", [("bitcoin", 500)])
+
+    real = alerts_module._current_matches
+
+    def flaky(preset, enriched):
+        if preset.name == "a":
+            raise RuntimeError(f"boom {HOOK}")
+        return real(preset, enriched)
+
+    monkeypatch.setattr(alerts_module, "_current_matches", flaky)
+    ra, rb = check_alerts()
+    assert ra.error == "RuntimeError during check" and not ra.delivered
+    assert rb.delivered and rb.error is None
+    by_name = {a.preset_name: a for a in list_alerts()}
+    assert by_name["a"].last_error == "RuntimeError during check"
+    assert "SECRET-TOKEN" not in by_name["a"].last_error
+
+
+def test_unexpected_send_error_keeps_coins_pending(db_path, webhook):
+    _big_volume_preset()
+    set_alert("big", HOOK)
+    _snapshot(db_path, "t1", [("bitcoin", 500)])
+    webhook.error = ValueError("unexpected")
+    [r] = check_alerts()
+    assert r.error == "ValueError while sending"
+    assert list_alerts()[0].last_matched == []
+
+    webhook.error = None
+    [r] = check_alerts()
+    assert r.delivered and _sent_ids(webhook) == ["bitcoin"]
+
+
+def test_concurrent_checks_send_once(db_path, webhook):
+    _big_volume_preset()
+    set_alert("big", HOOK)
+    _snapshot(db_path, "t1", [("bitcoin", 500)])
+    [stale] = list_alerts()  # what a second, concurrent checker read
+
+    assert len(check_alerts()) == 1
+    enriched, fetched_at = alerts_module.latest_with_surge()
+    preset = alerts_module.get_preset("big")
+    assert alerts_module._check_one(stale, preset, enriched, fetched_at) is None
+    assert len(webhook.calls) == 1
+
+
+def test_not_pinned_when_private_webhooks_allowed(db_path, webhook, monkeypatch):
+    monkeypatch.setattr(settings, "alerts_allow_private_webhooks", True)
+    _big_volume_preset()
+    set_alert("big", "http://localhost:5678/webhook")
+    _snapshot(db_path, "t1", [("bitcoin", 500)])
+    check_alerts()
+    call = webhook.calls[0]
+    assert call["url"] == "http://localhost:5678/webhook"
+    assert call["headers"] == {} and call["extensions"] == {}
+
+
+def test_not_pinned_through_a_proxy(db_path, webhook, monkeypatch):
+    monkeypatch.setattr(alerts_module, "_uses_proxy", lambda url: True)
+    _big_volume_preset()
+    set_alert("big", HOOK)
+    _snapshot(db_path, "t1", [("bitcoin", 500)])
+    check_alerts()
+    assert webhook.calls[0]["url"] == HOOK
+
+
+def test_pinned_host_header_keeps_a_non_default_port(db_path, webhook):
+    _big_volume_preset()
+    set_alert("big", "https://hooks.example.com:8443/x")
+    _snapshot(db_path, "t1", [("bitcoin", 500)])
+    check_alerts()
+    call = webhook.calls[0]
+    assert call["url"] == "https://93.184.216.34:8443/x"
+    assert call["headers"] == {"Host": "hooks.example.com:8443"}
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, False),
+        ({"HTTPS_PROXY": "http://proxy:3128"}, True),
+        ({"HTTPS_PROXY": "http://proxy:3128", "NO_PROXY": "hooks.example.com"}, False),
+        ({"ALL_PROXY": "http://proxy:3128"}, True),
+    ],
+)
+def test_uses_proxy(monkeypatch, env, expected):
+    for var in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]:
+        monkeypatch.delenv(var, raising=False)
+        monkeypatch.delenv(var.lower(), raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    assert alerts_module._uses_proxy(httpx.URL(HOOK)) is expected
+
+
 # --- API --------------------------------------------------------------------------
 
 
@@ -312,6 +478,21 @@ def test_alert_api_errors(client, dns):
     assert resp.status_code == 422
     assert "non-public" in resp.json()["detail"]
     assert client.put("/api/alerts/big", json={}).status_code == 422
+    resp = client.put("/api/alerts/big", json={"webhook_url": "https://hooks.example.com:99999/x"})
+    assert resp.status_code == 422 and "port" in resp.json()["detail"]
+
+
+def test_startup_warns_when_auth_is_disabled(db_path, caplog):
+    with caplog.at_level("WARNING"), TestClient(app):
+        pass
+    assert any("AUTH_PASSWORD is not set" in r.message for r in caplog.records)
+
+
+def test_no_auth_warning_when_password_set(db_path, caplog, monkeypatch):
+    monkeypatch.setattr(settings, "auth_password", "secret")
+    with caplog.at_level("WARNING"), TestClient(app):
+        pass
+    assert not any("AUTH_PASSWORD" in r.message for r in caplog.records)
 
 
 def test_alert_api_requires_auth(client, dns, monkeypatch):
