@@ -1,0 +1,40 @@
+{% set failing = alerts | selectattr("last_error") | list %}
+{% if failing %}
+<div class="banner error">
+  <strong>{{ failing | length }} alert{{ '' if failing | length == 1 else 's' }} failing.</strong>
+  The coins will be retried on the next check; see the error column below.
+</div>
+{% endif %}
+{% if not alerts %}
+<div class="empty">
+  No alerts yet. Select a preset above, paste a webhook URL, and click <em>Set alert</em>
+  to get notified when coins start matching it.
+</div>
+{% else %}
+<table class="alerts">
+  <thead>
+    <tr>
+      <th>Preset</th>
+      <th>Webhook</th>
+      <th>Matching</th>
+      <th>Last checked</th>
+      <th>Last notified</th>
+      <th>Last error</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for a in alerts %}
+    <tr>
+      <td>{{ a.preset }}</td>
+      <td><code>{{ a.webhook }}</code></td>
+      <td>{{ a.matching }}</td>
+      <td>{{ a.last_checked_at or "—" }}</td>
+      <td>{{ a.last_notified_at or "—" }}</td>
+      <td class="{{ 'down' if a.last_error else '' }}">{{ a.last_error or "—" }}</td>
+      <td><button type="button" class="alert-delete" data-preset="{{ a.preset }}">Delete</button></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}

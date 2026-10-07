@@ -504,9 +504,54 @@ def test_no_auth_warning_when_password_set(db_path, caplog, monkeypatch):
     assert not any("AUTH_PASSWORD" in r.message for r in caplog.records)
 
 
+def test_alerts_fragment_empty_state(client):
+    resp = client.get("/alerts")
+    assert resp.status_code == 200
+    assert "No alerts yet" in resp.text
+
+
+def test_alerts_fragment_lists_alerts_with_masked_webhooks(client, dns):
+    client.put("/api/presets/big", json={"min_volume": 100})
+    client.put("/api/alerts/big", json={"webhook_url": HOOK})
+    resp = client.get("/alerts")
+    assert resp.status_code == 200
+    assert "https://hooks.example.com/…" in resp.text
+    assert "SECRET-TOKEN" not in resp.text
+    assert 'data-preset="big"' in resp.text
+    assert "failing" not in resp.text
+
+
+def test_alerts_fragment_flags_failing_alerts(client, db_path, webhook):
+    client.put("/api/presets/big", json={"min_volume": 100})
+    client.put("/api/alerts/big", json={"webhook_url": HOOK})
+    _snapshot(db_path, "t1", [("bitcoin", 500)])
+    webhook.status = 500
+    check_alerts()
+    resp = client.get("/alerts")
+    assert "1 alert failing" in resp.text
+    assert "Webhook returned HTTP 500" in resp.text
+
+
+def test_alerts_fragment_escapes_errors(client, db_path, dns):
+    client.put("/api/presets/big", json={})
+    client.put("/api/alerts/big", json={"webhook_url": HOOK})
+    with connect(db_path) as conn:
+        conn.execute("UPDATE alerts SET last_error = '<script>x</script>'")
+    resp = client.get("/alerts")
+    assert "<script>x</script>" not in resp.text
+    assert "&lt;script&gt;" in resp.text
+
+
+def test_dashboard_has_alerts_panel(client):
+    resp = client.get("/")
+    assert 'id="alerts-panel"' in resp.text
+    assert 'hx-get="/alerts"' in resp.text
+
+
 def test_alert_api_requires_auth(client, dns, monkeypatch):
     monkeypatch.setattr(settings, "auth_password", "secret")
     assert client.get("/api/alerts").status_code == 401
+    assert client.get("/alerts").status_code == 401
     assert client.put("/api/alerts/big", json={"webhook_url": HOOK}).status_code == 401
     assert client.delete("/api/alerts/big").status_code == 401
 

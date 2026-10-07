@@ -56,6 +56,16 @@
   .chart .none { color: #777; font-size: 0.85rem; height: 80px; display: flex; align-items: center; justify-content: center; }
   table.history th:nth-child(2), table.history td:nth-child(2) { text-align: right; }
   .panel { background: #15161a; border: 1px solid #23252b; border-radius: 8px; overflow: hidden; }
+  .alerts-panel { margin-bottom: 1rem; }
+  .alerts-panel summary { cursor: pointer; color: #9aa; font-size: 0.85rem; margin-bottom: 0.5rem; }
+  .alerts-panel summary .msg { margin-left: 0.5rem; }
+  .alerts-panel .msg.error { color: #f87171; }
+  .alerts-panel #alert-url { flex: 1 1 280px; }
+  table.alerts td:nth-child(3) { text-align: right; }
+  table.alerts td, table.alerts th { text-align: left; }
+  table.alerts td:last-child { text-align: right; }
+  table.alerts button { padding: 0.25rem 0.5rem; background: #1c1d22; color: #e6e6e6; border: 1px solid #2a2c33; border-radius: 4px; cursor: pointer; }
+  table.alerts button:hover { border-color: #f87171; }
 </style>
 </head>
 <body>
