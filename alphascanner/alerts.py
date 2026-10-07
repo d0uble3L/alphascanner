@@ -15,7 +15,7 @@ import httpx
 
 from .config import settings
 from .db import connect
-from .presets import Preset, get_preset, is_valid_name, list_presets
+from .presets import Preset, is_valid_name, list_presets
 from .scanner import latest_with_surge, matching_rows
 
 log = logging.getLogger(__name__)
@@ -142,7 +142,12 @@ def set_alert(preset_name: str, webhook_url: str) -> None:
     A new alert starts from the coins matching right now, so it only notifies
     about coins that start matching later rather than everything at once.
     """
-    preset = get_preset(preset_name)
+    # The name comes from the request path. Match it against the stored presets
+    # instead of querying by it, so request input never reaches a SQL statement;
+    # every value written below comes from the database or is validated.
+    if not is_valid_name(preset_name):
+        raise UnknownPreset(preset_name)
+    preset = next((p for p in list_presets() if p.name == preset_name), None)
     if preset is None:
         raise UnknownPreset(preset_name)
     validate_webhook_url(webhook_url)
@@ -157,7 +162,7 @@ def set_alert(preset_name: str, webhook_url: str) -> None:
                 "VALUES (?,?,?,?) "
                 "ON CONFLICT(preset_name) DO UPDATE SET webhook_url = excluded.webhook_url, "
                 "last_error = NULL",
-                (preset_name, webhook_url, json.dumps(seed), _now()),
+                (preset.name, webhook_url, json.dumps(seed), _now()),
             )
     except sqlite3.IntegrityError:
         # The foreign key on presets(name) rejects alerts on presets that don't exist.

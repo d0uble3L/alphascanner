@@ -23,7 +23,7 @@ from alphascanner.api import app
 from alphascanner.cli import app as cli_app
 from alphascanner.config import settings
 from alphascanner.db import connect
-from alphascanner.presets import delete_preset, save_preset
+from alphascanner.presets import delete_preset, get_preset, save_preset
 from alphascanner.scanner import ScreenQuery
 
 HOOK = "https://hooks.example.com/services/T000/SECRET-TOKEN"
@@ -158,6 +158,15 @@ def test_alert_requires_existing_preset(db_path, dns):
         set_alert("missing", HOOK)
     with pytest.raises(UnknownPreset):
         set_alert("bad name", HOOK)
+
+
+@pytest.mark.parametrize("name", ["x' OR '1'='1", "big'; DROP TABLE presets; --", "big%27"])
+def test_injection_style_preset_names_are_rejected(db_path, dns, name):
+    _big_volume_preset()
+    with pytest.raises(UnknownPreset):
+        set_alert(name, HOOK)
+    assert list_alerts() == []
+    assert get_preset("big") is not None
 
 
 def test_invalid_url_is_not_saved(db_path, dns):
@@ -394,7 +403,7 @@ def test_concurrent_checks_send_once(db_path, webhook):
 
     assert len(check_alerts()) == 1
     enriched, fetched_at = alerts_module.latest_with_surge()
-    preset = alerts_module.get_preset("big")
+    preset = get_preset("big")
     assert alerts_module._check_one(stale, preset, enriched, fetched_at) is None
     assert len(webhook.calls) == 1
 
