@@ -44,6 +44,9 @@ alphascanner fetch          # one-shot snapshot
 alphascanner screen --sort-by volume_surge --min-volume-surge 2 --limit 20
 ```
 
+For a step-by-step tour of every feature (coin history, presets, alerts in
+the CLI and web UI), see [Getting started](#getting-started-try-every-feature-locally).
+
 Leave `ALPHASCANNER_COINGECKO_API_KEY` blank in `.env` to use the free
 CoinGecko tier — no key needed. See [Configuration](#configuration) for
 Demo/Pro key setup.
@@ -75,6 +78,138 @@ checked via a heartbeat file touched after every fetch loop iteration — a
 wedged scheduler shows as `unhealthy` within an hour. The file sits next to the
 database (`/data/scheduler.heartbeat` in Docker, `./data/scheduler.heartbeat`
 for local runs).
+
+## Getting started: try every feature locally
+
+A walkthrough from a fresh clone to each feature: the dashboard, coin
+history, presets, and alerts (CLI, web UI, failing deliveries, and auth).
+Run commands from the repo root.
+
+### 1. Set up
+
+```bash
+git clone https://github.com/d0uble3L/alphascanner.git
+cd alphascanner
+python3.12 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+cp .env.example .env
+```
+
+Then edit `.env` (the database defaults to `./data/alphascanner.db`, so there's
+no path to set):
+
+```ini
+ALPHASCANNER_FETCH_PAGES=2                       # gentler on CoinGecko's free tier
+ALPHASCANNER_ALERTS_ALLOW_PRIVATE_WEBHOOKS=true  # only so alerts can reach the local test receiver
+```
+
+The last setting exists only for this walkthrough. Set it back to `false`
+before the server is reachable by anyone else.
+
+### 2. Load some data
+
+```bash
+alphascanner init
+alphascanner fetch
+# wait about a minute, then:
+alphascanner fetch      # volume surge needs at least 2 snapshots
+```
+
+If CoinGecko returns a 429, wait a minute and try again.
+
+### 3. Start the app
+
+```bash
+# Terminal 1: web UI
+uvicorn alphascanner.api:app --reload      # open http://localhost:8000
+
+# Terminal 2 (optional): fetches every 15 minutes and checks alerts after each fetch
+python -m alphascanner.scheduler
+```
+
+With no password set, uvicorn logs `ALPHASCANNER_AUTH_PASSWORD is not set…`
+at startup. That's expected; see [Auth](#auth) below.
+
+### 4. Coin history
+
+- Click any symbol or name in the dashboard to open `/coin/<id>`: price,
+  volume, and volume-surge sparklines plus the snapshot table.
+- From the CLI: `alphascanner history bitcoin --limit 10`
+
+### 5. Alerts from the CLI
+
+Start the test receiver in terminal 3. It prints every alert it gets:
+
+```bash
+python scripts/hook_receiver.py            # listens on http://127.0.0.1:9000
+```
+
+A new alert starts from the coins already matching, so it only notifies about
+coins that match *later*. To see a notification straight away, create the alert
+on a strict preset, then loosen the preset (the alert is kept):
+
+```bash
+alphascanner screen --min-volume 5000000000 --save-as demo   # strict: very few coins
+alphascanner alert set demo http://127.0.0.1:9000/hook
+alphascanner alert check     # 'demo': no new matches (N matching).
+
+alphascanner screen --min-volume 50000000 --save-as demo     # loosen it
+alphascanner alert check     # 'demo': notified K new match(es) ...
+```
+
+Terminal 3 prints `AlphaScanner: K new matches for preset 'demo': ...` with
+each coin. Run `alert check` again and it reports no new matches: each coin is
+sent once until it drops out of the preset and comes back.
+
+### 6. Alerts in the web UI
+
+1. Reload <http://localhost:8000> and expand **Alerts** under the preset bar.
+   `demo` is listed with its webhook masked to the host.
+2. To set an alert from the UI, pick a preset in the dropdown, paste
+   `http://127.0.0.1:9000/x`, and click **Set alert**.
+3. To check validation, try `ftp://x`, or click **Set alert** with no preset
+   selected. The error shows inline.
+4. To see a failing alert, start `python -m http.server 9001` in another
+   terminal. It answers POSTs with HTTP 501, so deliveries to it fail:
+
+   ```bash
+   alphascanner screen --min-volume 5000000000 --save-as broken
+   alphascanner alert set broken http://127.0.0.1:9001/
+   alphascanner screen --min-volume 50000000 --save-as broken
+   alphascanner alert check     # delivery failed: Webhook returned HTTP 501 (exit code 1)
+   ```
+
+   Within a minute (or straight away if you reload), the panel opens on its
+   own. The header reads "… 1 failing", a red banner appears, and the error
+   column shows `Webhook returned HTTP 501`. If you collapse the panel, it
+   stays collapsed until another alert starts failing. The coins are retried
+   on the next check.
+5. Click **Delete** on a row, or delete the preset from the preset bar (that
+   also deletes its alert). The panel updates without a reload.
+
+### 7. A real Slack or public webhook (optional)
+
+Set `ALPHASCANNER_ALERTS_ALLOW_PRIVATE_WEBHOOKS=false`, restart uvicorn, and
+use a Slack incoming-webhook URL or one from <https://webhook.site>. The
+payload's `text` field renders in Slack as is; the UI and
+`alphascanner alert list` show only the host. A `http://localhost/...` URL is
+now rejected as non-public.
+
+### Auth
+
+Set `ALPHASCANNER_AUTH_PASSWORD=something` in `.env` and restart uvicorn. The
+startup warning goes away and the browser asks for a login (username `admin`,
+or `ALPHASCANNER_AUTH_USERNAME`).
+
+### Run the checks
+
+See [Tests](#tests): `pytest`, `ruff check .`, and `bandit`.
+
+With Docker (`docker compose up --build`) leave `ALPHASCANNER_DB_PATH` unset;
+the image points it at the `/data` volume. A webhook receiver running on your
+machine isn't `127.0.0.1` from inside the container, so use your host's address
+for it instead.
 
 ## Signals
 
@@ -269,6 +404,8 @@ alphascanner/
   scheduler.py  # async loop
   templates/
 tests/
+scripts/
+  hook_receiver.py  # local webhook receiver for trying out alerts
 Dockerfile
 docker-compose.yml
 requirements-lock.txt  # pinned runtime deps used by the Docker build
