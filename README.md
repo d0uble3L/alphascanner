@@ -96,10 +96,10 @@ pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-Then edit `.env`:
+Then edit `.env` (the database defaults to `./data/alphascanner.db`, so there's
+no path to set):
 
 ```ini
-ALPHASCANNER_DB_PATH=data/alphascanner.db        # the example's /data/... path is for Docker
 ALPHASCANNER_FETCH_PAGES=2                       # gentler on CoinGecko's free tier
 ALPHASCANNER_ALERTS_ALLOW_PRIVATE_WEBHOOKS=true  # only so alerts can reach the local test receiver
 ```
@@ -206,9 +206,10 @@ or `ALPHASCANNER_AUTH_USERNAME`).
 
 See [Tests](#tests): `pytest`, `ruff check .`, and `bandit`.
 
-With Docker (`docker compose up --build`) keep `ALPHASCANNER_DB_PATH` on
-`/data/...`. A webhook receiver running on your machine isn't `127.0.0.1` from
-inside the container, so use your host's address for it instead.
+With Docker (`docker compose up --build`) leave `ALPHASCANNER_DB_PATH` unset;
+the image points it at the `/data` volume. A webhook receiver running on your
+machine isn't `127.0.0.1` from inside the container, so use your host's address
+for it instead.
 
 ## Signals
 
