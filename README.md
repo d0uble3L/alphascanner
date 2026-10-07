@@ -135,6 +135,13 @@ alphascanner screen --min-volume-surge 3 --max-market-cap 500000000 --save-as su
 alphascanner alert set surge3 https://hooks.slack.com/services/T000/B000/XXXX
 ```
 
+Or in the web UI: open **Alerts** under the preset bar, select the preset,
+paste the webhook URL, and click **Set alert**. The panel lists every alert
+with its masked webhook, last check, last notification, and last error, and
+has a Delete button for each. It refreshes every minute. When an alert is
+failing, the panel header shows a red count, and the panel opens on its own
+when a new failure appears, so you see the problem without expanding it.
+
 The scheduler checks every alert after each successful fetch. It POSTs only
 coins that weren't matching on the previous check, so a coin that stays in
 the screen notifies once; if it drops out and comes back, it notifies again.
@@ -203,6 +210,7 @@ the same baseline the dashboard uses, so the newest value matches it.
 - `GET /coin/{coin_id}` — coin history page
 - `GET /api/coins/{coin_id}/history?limit=N` — same data as JSON, oldest
   first (`limit` 1–1000, default 200)
+- `GET /alerts` — alerts table HTML fragment (HTMX target)
 - `GET /api/alerts` — list alerts (webhook URLs masked to the host)
 - `PUT /api/alerts/{preset}` — create an alert or change its webhook; JSON
   body `{"webhook_url": "https://..."}` (`404` if the preset doesn't exist,

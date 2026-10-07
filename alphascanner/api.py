@@ -244,6 +244,14 @@ async def list_alerts_api():
     return [_alert_out(a) for a in list_alerts()]
 
 
+@app.get("/alerts", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
+async def alerts_html(request: Request):
+    """Alerts table fragment for the dashboard (HTMX target). Webhooks are masked."""
+    return TEMPLATES.TemplateResponse(
+        request, "alerts.html", {"alerts": [_alert_out(a) for a in list_alerts()]}
+    )
+
+
 # Sync def on purpose: webhook validation does a blocking DNS lookup, and FastAPI
 # runs sync handlers in a threadpool instead of on the event loop.
 @app.put("/api/alerts/{preset_name}", dependencies=[Depends(require_auth)])

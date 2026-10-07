@@ -19,6 +19,22 @@
   <span id="preset-msg" class="msg" role="status"></span>
 </div>
 
+<details class="alerts-panel" id="alerts-panel">
+  <summary>Alerts <span id="alerts-summary" class="msg"></span></summary>
+  <div class="presets">
+    <label for="alert-url">Webhook for the selected preset</label>
+    <input id="alert-url" type="url" placeholder="https://hooks.slack.com/services/…"
+           maxlength="2048" autocomplete="off" spellcheck="false">
+    <button type="button" id="alert-set">Set alert</button>
+    <span id="alert-msg" class="msg" role="status"></span>
+  </div>
+  <div id="alerts" class="panel"
+       hx-get="/alerts"
+       hx-trigger="load, every 60s, alerts-changed from:body">
+    <div class="empty">Loading…</div>
+  </div>
+</details>
+
 <form class="filters"
       hx-get="/screen"
       hx-target="#results"
@@ -132,6 +148,70 @@
     say(`Saved "${body.name}".`);
   });
 
+  const alertUrl = document.getElementById("alert-url");
+  const alertMsg = document.getElementById("alert-msg");
+  const alertsChanged = () => document.body.dispatchEvent(new Event("alerts-changed"));
+
+  function sayAlert(text, isError = false) {
+    alertMsg.textContent = text;
+    alertMsg.classList.toggle("error", isError);
+  }
+
+  async function send(url, options) {
+    try {
+      return await fetch(url, options);
+    } catch {
+      sayAlert("Couldn't reach the server. Check your connection and try again.", true);
+      return null;
+    }
+  }
+
+  document.getElementById("alert-set").addEventListener("click", async () => {
+    const name = select.value;
+    if (!name) return sayAlert("Select a saved preset first.", true);
+    const url = alertUrl.value.trim();
+    if (!url) return sayAlert("Paste the webhook URL to notify.", true);
+    const resp = await send(`/api/alerts/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ webhook_url: url }),
+    });
+    if (!resp) return;
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) return sayAlert(errorText(body), true);
+    alertUrl.value = "";  // the full URL may hold a secret token; don't leave it on screen
+    sayAlert(`Alert set on "${body.preset}" -> ${body.webhook}.`);
+    alertsChanged();
+  });
+
+  document.getElementById("alerts").addEventListener("click", async (event) => {
+    const button = event.target.closest("button.alert-delete");
+    if (!button) return;
+    const name = button.dataset.preset;
+    const resp = await send(`/api/alerts/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!resp) return;
+    if (!resp.ok && resp.status !== 404) {
+      return sayAlert(errorText(await resp.json().catch(() => ({}))), true);
+    }
+    sayAlert(`Deleted the alert on "${name}".`);
+    alertsChanged();
+  });
+
+  // Keep the panel's header in sync so a failing alert is visible while it's collapsed.
+  // Open the panel only when more alerts are failing than at the last refresh, so it
+  // doesn't reopen every minute after you've collapsed it.
+  let lastFailing = 0;
+  document.body.addEventListener("htmx:afterSwap", (event) => {
+    if (event.detail.target.id !== "alerts") return;
+    const rows = event.detail.target.querySelectorAll("tbody tr").length;
+    const failing = event.detail.target.querySelectorAll("td.down").length;
+    const summary = document.getElementById("alerts-summary");
+    summary.textContent = rows ? `${rows} active${failing ? `, ${failing} failing` : ""}` : "none";
+    summary.classList.toggle("error", failing > 0);
+    if (failing > lastFailing) document.getElementById("alerts-panel").open = true;
+    lastFailing = failing;
+  });
+
   document.getElementById("preset-delete").addEventListener("click", async () => {
     const name = select.value;
     if (!name) return say("Select a preset to delete.", true);
@@ -142,6 +222,7 @@
     select.selectedOptions[0].remove();
     select.value = "";
     say(`Deleted "${name}".`);
+    alertsChanged();  // deleting a preset deletes its alert
   });
 })();
 </script>
