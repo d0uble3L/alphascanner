@@ -1,5 +1,6 @@
 import pytest
 
+from alphascanner.config import settings
 from alphascanner.db import connect
 from alphascanner.scanner import FilterParams, historical_avg_volume, latest_snapshot_df, scan
 
@@ -34,6 +35,17 @@ def test_historical_avg_volume_excludes_latest_snapshot(db_path):
         _insert_snapshot(conn, "btc", "2024-01-03T00:00:00", 999)  # latest, excluded
     avg = historical_avg_volume()
     row = avg[avg["coin_id"] == "btc"].iloc[0]
+    assert row["avg_volume"] == pytest.approx(20.0)
+
+
+def test_historical_avg_volume_uses_only_the_window(db_path, monkeypatch):
+    monkeypatch.setattr(settings, "history_window", 2)
+    with connect(db_path) as conn:
+        _insert_snapshot(conn, "btc", "2024-01-01T00:00:00", 1000)  # outside the window
+        _insert_snapshot(conn, "btc", "2024-01-02T00:00:00", 10)
+        _insert_snapshot(conn, "btc", "2024-01-03T00:00:00", 30)
+        _insert_snapshot(conn, "btc", "2024-01-04T00:00:00", 999)  # latest, excluded
+    row = historical_avg_volume().set_index("coin_id").loc["btc"]
     assert row["avg_volume"] == pytest.approx(20.0)
 
 

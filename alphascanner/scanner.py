@@ -75,23 +75,19 @@ def latest_snapshot_df() -> tuple[pd.DataFrame, str | None]:
 
 def historical_avg_volume() -> pd.DataFrame:
     """Average volume per coin across the most recent N snapshots, excluding the newest."""
+    # A fixed query with only bound parameters: no SQL text is ever built at
+    # runtime. OFFSET 1 skips the newest snapshot; with fewer than two
+    # snapshots the subquery is empty, so no coin gets an average.
     with connect() as conn:
-        ts_rows = conn.execute(
-            "SELECT DISTINCT fetched_at FROM snapshots ORDER BY fetched_at DESC LIMIT ?",
-            (settings.history_window + 1,),
-        ).fetchall()
-        timestamps = [r[0] for r in ts_rows]
-        if len(timestamps) < 2:
-            return pd.DataFrame(columns=["coin_id", "avg_volume"])
-        history = timestamps[1:]
-        placeholders = ",".join("?" for _ in history)
-        df = pd.read_sql_query(
-            f"SELECT coin_id, AVG(total_volume) AS avg_volume FROM snapshots "  # nosec B608
-            f"WHERE fetched_at IN ({placeholders}) GROUP BY coin_id",
+        return pd.read_sql_query(
+            "SELECT coin_id, AVG(total_volume) AS avg_volume FROM snapshots "
+            "WHERE fetched_at IN ("
+            "  SELECT DISTINCT fetched_at FROM snapshots "
+            "  ORDER BY fetched_at DESC LIMIT ? OFFSET 1"
+            ") GROUP BY coin_id",
             conn,
-            params=history,
+            params=(settings.history_window,),
         )
-    return df
 
 
 # CoinGecko coin ids are short slugs like "bitcoin" or "usd-coin".
@@ -101,26 +97,55 @@ COIN_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
 def coin_history(coin_id: str, limit: int = 200) -> pd.DataFrame:
     """One coin's snapshots, oldest first, each with its own volume_surge.
 
-    Surge for a snapshot is its volume over the mean of the coin's previous
-    `history_window` snapshots, so the newest row matches the main screen's
-    surge whenever the coin is present in every snapshot.
+    Surge for a snapshot uses the same baseline as the main screen did at that
+    time: the coin's mean volume over the previous `history_window` snapshot
+    times (across all coins), skipping times the coin wasn't in. So the newest
+    row always matches the main screen's surge.
     """
     if not COIN_ID_RE.fullmatch(coin_id):
         return pd.DataFrame()
+    window = settings.history_window
     with connect() as conn:
-        # Fetch extra rows so even the oldest returned row has a full baseline.
         df = pd.read_sql_query(
             "SELECT * FROM snapshots WHERE coin_id = ? ORDER BY fetched_at DESC LIMIT ?",
             conn,
-            params=(coin_id, limit + settings.history_window),
+            params=(coin_id, limit),
         )
-    if df.empty:
-        return df
+        if df.empty:
+            return df
+        oldest = df["fetched_at"].min()
+        # Every snapshot time since the oldest returned row, plus the `window`
+        # times before it so that row gets a full baseline too.
+        before = [
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT fetched_at FROM snapshots WHERE fetched_at < ? "
+                "ORDER BY fetched_at DESC LIMIT ?",
+                (oldest, window),
+            )
+        ]
+        since = [
+            r[0]
+            for r in conn.execute(
+                "SELECT DISTINCT fetched_at FROM snapshots WHERE fetched_at >= ? "
+                "ORDER BY fetched_at",
+                (oldest,),
+            )
+        ]
+        start = before[-1] if before else oldest
+        volumes = pd.read_sql_query(
+            "SELECT fetched_at, total_volume FROM snapshots WHERE coin_id = ? AND fetched_at >= ?",
+            conn,
+            params=(coin_id, start),
+        )
+    timeline = list(reversed(before)) + since
+    # NaN wherever the coin is missing from a snapshot; the mean skips those.
+    per_time = volumes.groupby("fetched_at")["total_volume"].mean().reindex(timeline)
+    baseline = per_time.shift(1).rolling(window, min_periods=1).mean()
     df = df.iloc[::-1].reset_index(drop=True)
-    baseline = df["total_volume"].shift(1).rolling(settings.history_window, min_periods=1).mean()
-    df["avg_volume"] = baseline
-    df["volume_surge"] = df["total_volume"] / baseline.replace(0, float("nan"))
-    return df.tail(limit).reset_index(drop=True)
+    df["avg_volume"] = df["fetched_at"].map(baseline)
+    df["volume_surge"] = df["total_volume"] / df["avg_volume"].replace(0, float("nan"))
+    return df
 
 
 def with_volume_surge(latest: pd.DataFrame, avg: pd.DataFrame) -> pd.DataFrame:
@@ -140,6 +165,12 @@ def with_volume_surge(latest: pd.DataFrame, avg: pd.DataFrame) -> pd.DataFrame:
 
 
 def apply_filters(df: pd.DataFrame, params: FilterParams) -> pd.DataFrame:
+    """Every row passing the filters, sorted, cut to the top `params.limit`."""
+    return matching_rows(df, params).head(params.limit)
+
+
+def matching_rows(df: pd.DataFrame, params: FilterParams) -> pd.DataFrame:
+    """Every row passing the filters, sorted, ignoring `params.limit`."""
     if df.empty:
         return df
     out = df
@@ -165,13 +196,19 @@ def apply_filters(df: pd.DataFrame, params: FilterParams) -> pd.DataFrame:
     sort_col = SORT_MAP.get(params.sort_by, "volume_surge")
     if sort_col not in out.columns:
         sort_col = "total_volume"
-    out = out.sort_values(sort_col, ascending=False, na_position="last")
-    return out.head(params.limit)
+    return out.sort_values(sort_col, ascending=False, na_position="last")
 
 
-def scan(params: FilterParams) -> tuple[pd.DataFrame, str | None]:
+def latest_with_surge() -> tuple[pd.DataFrame, str | None]:
+    """The newest snapshot with volume_surge added, before any filtering."""
     latest, fetched_at = latest_snapshot_df()
     if latest.empty:
         return latest, None
-    enriched = with_volume_surge(latest, historical_avg_volume())
+    return with_volume_surge(latest, historical_avg_volume()), fetched_at
+
+
+def scan(params: FilterParams) -> tuple[pd.DataFrame, str | None]:
+    enriched, fetched_at = latest_with_surge()
+    if fetched_at is None:
+        return enriched, None
     return apply_filters(enriched, params), fetched_at

@@ -116,6 +116,12 @@ def _rows_for_display(df) -> list[dict]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    if not settings.auth_password:
+        log.warning(
+            "ALPHASCANNER_AUTH_PASSWORD is not set: anyone who can reach this server can "
+            "view screens and create alerts that POST to any public URL. Set a password "
+            "unless it's only reachable by you."
+        )
     yield
 
 

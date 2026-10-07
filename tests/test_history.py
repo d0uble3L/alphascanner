@@ -47,6 +47,24 @@ def test_newest_surge_matches_main_screen(db_path):
         assert coin_history(coin_id)["volume_surge"].iloc[-1] == pytest.approx(expected)
 
 
+def test_surge_matches_main_screen_for_a_coin_missing_from_snapshots(db_path, monkeypatch):
+    monkeypatch.setattr(settings, "history_window", 1)
+    _seed(db_path, {"bitcoin": [100.0, 300.0, 400.0]})
+    with connect(db_path) as conn:  # ethereum is absent from the middle snapshot
+        for ts, vol in [(SNAPSHOTS[0], 50.0), (SNAPSHOTS[2], 200.0)]:
+            conn.execute(
+                "INSERT INTO snapshots (coin_id, symbol, name, total_volume, fetched_at) "
+                "VALUES ('ethereum', 'eth', 'Ethereum', ?, ?)",
+                (vol, ts),
+            )
+    screened, _ = scan(FilterParams(sort_by="volume_surge"))
+    main = screened.loc[screened["coin_id"] == "ethereum", "volume_surge"].iloc[0]
+    # The main screen's 1-snapshot window is the middle snapshot, which ethereum
+    # isn't in, so it has no baseline; history must agree rather than use t0.
+    assert math.isnan(main)
+    assert math.isnan(coin_history("ethereum")["volume_surge"].iloc[-1])
+
+
 def test_history_window_limits_the_baseline(db_path, monkeypatch):
     monkeypatch.setattr(settings, "history_window", 1)
     _seed(db_path, {"bitcoin": [100.0, 300.0, 600.0]})

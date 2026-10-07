@@ -4,14 +4,35 @@ Format: **Now / Next / Later**. Now = committed for the current sprint. Next
 = planned, scoped, but timing is soft. Later = directional strategic bets,
 not yet scoped.
 
-Last updated: 2026-10-06.
+Last updated: 2026-10-07.
 
 ## Status
 
 Recently shipped:
 
+- **Alert + history hardening** (the PR adding this update), from a code
+  review of #30:
+  - Alerts compare every coin passing a preset's filters, not just its top
+    `limit`, so rank changes no longer trigger notifications. The limit now
+    only caps how many coins a notification lists (`new_count` gives the
+    total)
+  - Webhook requests connect to the exact IP that passed the public-address
+    check, closing the DNS-rebinding gap listed under Risks
+  - A webhook URL with an invalid port is rejected with a 422 instead of
+    causing a 500
+  - One failing alert no longer stops the remaining alerts from being checked
+  - A concurrent `alert check` and scheduler run can't send the same coins
+    twice (compare-and-swap on `last_matched`)
+  - New alerts start from the coins matching at creation instead of
+    notifying about all of them on the first check
+  - The latest snapshot and volume surge are computed once per check, not
+    once per alert
+  - Coin-history surge uses the main screen's baseline, so the two agree
+    even for coins missing from some snapshots
+  - Startup warning when auth is off, since anyone who can reach the server
+    can then create alerts
 - **Sprint 1 complete** — all three items below (presets #24; alerts and
-  coin history in the PR adding this update)
+  coin history #30)
 - Docker base image back on `python:3.12-alpine` (#26) after a Snyk auto-fix
   moved it to a Python 3.15 release candidate and broke the build
 - Scheduler heartbeat path derived from `db_path`, undocumented env override
@@ -29,9 +50,11 @@ approval):
   version bumps, no app code touched, green on CI
 - 5 Dependabot PRs bumping pinned runtime deps in `requirements-lock.txt`
   (#19–#23: fastapi, uvicorn, pandas, idna, starlette), not yet reviewed
-- **Do not merge #28** — Snyk re-proposing the `python:3.15-rc-alpine3.22`
-  base image that #26 reverted (it breaks `docker build`; the CVEs it cites
-  are already patched by `apk upgrade`). Close it.
+- **Do not merge #29.** Snyk is again proposing the
+  `python:3.15-rc-alpine3.22` base image that #26 reverted (it breaks
+  `docker build`, and `apk upgrade` already patches the CVEs it cites).
+  Close it. #28, an earlier copy of this PR, was merged without changing
+  anything: the Dockerfile is still on `python:3.12-alpine`
 
 ## Done (sprint 1)
 
@@ -71,10 +94,14 @@ starting.
 
 - No team-size/capacity data exists for this project (assumed solo
   maintainer) — revisit the "Now" scope if that's wrong
-- Snyk keeps proposing the Python 3.15 release-candidate base image (#25 was
-  merged and broke the build; #28 repeats it). Consider configuring Snyk to
-  stay on Python 3.12 so these stop arriving
-- Alert webhook validation resolves DNS at save and send time, but the HTTP
-  client resolves again when connecting, so a host that changes DNS in that
-  window (DNS rebinding) isn't fully covered. Acceptable for a self-hosted,
-  single-user tool; revisit before multi-user accounts
+- Snyk keeps proposing the Python 3.15 release-candidate base image (#25
+  broke the build when merged, #28 was merged as a no-op, and #29 is open).
+  Consider configuring Snyk to stay on Python 3.12 so these stop arriving
+- Webhook DNS-rebinding protection doesn't apply when the server sends
+  through an `HTTPS_PROXY`, because the proxy resolves the host. That's
+  acceptable for a self-hosted tool; revisit before adding multi-user
+  accounts
+- With auth off (no `ALPHASCANNER_AUTH_PASSWORD`), anyone who can reach the
+  server can create alerts. The server now warns about this at startup;
+  consider requiring a password for the alert endpoints before adding
+  multi-user accounts

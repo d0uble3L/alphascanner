@@ -138,9 +138,15 @@ alphascanner alert set surge3 https://hooks.slack.com/services/T000/B000/XXXX
 The scheduler checks every alert after each successful fetch. It POSTs only
 coins that weren't matching on the previous check, so a coin that stays in
 the screen notifies once; if it drops out and comes back, it notifies again.
+A new alert starts from whatever matches when you create it, so you hear
+about coins that start matching *after* that, not a dump of everything at
+once. "Matching" means passing the preset's filters; the preset's `limit`
+only caps how many coins one notification lists, so coins trading places in
+the ranking don't trigger anything.
 If a delivery fails (non-2xx response, timeout), the error shows in
 `alphascanner alert list` and the same coins are retried on the next check.
-Deleting a preset deletes its alert.
+Running `alphascanner alert check` while the scheduler is checking won't
+send anything twice. Deleting a preset deletes its alert.
 
 The POST body is JSON with a `text` summary, so it renders as-is in a Slack
 (or Slack-compatible) incoming webhook. The other fields are for anything
@@ -152,6 +158,7 @@ custom:
   "preset": "surge3",
   "fetched_at": "2026-10-06T21:07:47+00:00",
   "match_count": 5,
+  "new_count": 2,
   "new_matches": [
     {"coin_id": "...", "symbol": "...", "name": "...", "current_price": 0.42,
      "price_change_pct_24h": 18.2, "total_volume": 9200000,
@@ -163,8 +170,15 @@ custom:
 Because the server makes these requests, webhook URLs must be `http(s)` and
 must resolve to **public** addresses. Private, loopback, and link-local hosts
 (e.g. cloud metadata endpoints) are rejected when the alert is saved and again
-at send time, and redirects aren't followed. To post to something on your own
-network (say, a local n8n), set `ALPHASCANNER_ALERTS_ALLOW_PRIVATE_WEBHOOKS=true`.
+at send time, and redirects aren't followed. The request then connects to the
+exact address that was checked, so a DNS change between check and connect
+(DNS rebinding) can't redirect it. If the server reaches the internet through
+an `HTTPS_PROXY`, the proxy resolves the host instead. To post to something
+on your own network (say, a local n8n), set
+`ALPHASCANNER_ALERTS_ALLOW_PRIVATE_WEBHOOKS=true`.
+
+Without `ALPHASCANNER_AUTH_PASSWORD`, anyone who can reach the web server can
+create alerts, and the server logs a warning at startup saying so.
 Webhook URLs often embed a secret token, so listings show only the host.
 
 ### Coin history
@@ -172,8 +186,9 @@ Webhook URLs often embed a secret token, so listings show only the host.
 Click any coin in the dashboard (or open `/coin/COIN_ID`) for its price,
 volume, and volume-surge charts across every stored snapshot. From the CLI:
 `alphascanner history bitcoin --limit 50`. Each snapshot's volume surge is
-computed against that coin's previous `ALPHASCANNER_HISTORY_WINDOW`
-snapshots, so the newest value matches the dashboard.
+computed against the coin's average volume over the previous
+`ALPHASCANNER_HISTORY_WINDOW` snapshots (skipping any it was missing from),
+the same baseline the dashboard uses, so the newest value matches it.
 
 ## API
 
@@ -191,7 +206,7 @@ snapshots, so the newest value matches the dashboard.
 - `GET /api/alerts` — list alerts (webhook URLs masked to the host)
 - `PUT /api/alerts/{preset}` — create an alert or change its webhook; JSON
   body `{"webhook_url": "https://..."}` (`404` if the preset doesn't exist,
-  `422` for a rejected URL)
+  `422` for a rejected URL, including a bad port)
 - `DELETE /api/alerts/{preset}` — remove an alert (`204`, or `404`)
 - `GET /healthz`
 
