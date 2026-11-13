@@ -389,6 +389,28 @@ bandit -r alphascanner/ -ll -x alphascanner/templates  # security static analysi
 These are the same checks CI runs (`.github/workflows/ci.yml`), plus a
 `pip-audit` dependency scan.
 
+### Security analysis (SPECTRA)
+
+`.github/workflows/spectra.yml` runs Semgrep on the code and Trivy on the
+Docker image, then hands the findings to
+[SPECTRA](https://www.cybersecurityos.net/docs/spectra/), which uses Claude to
+rank them by real-world risk, link related findings into attack chains, and
+write remediation steps. The result is posted as one PR comment, updated on
+each push, and in the run summary. It's advisory and never fails the build.
+
+To turn it on, add an `ANTHROPIC_API_KEY` repository secret. Without it, the
+scans still run and the comment says SPECTRA was skipped. A clean scan skips
+the API call entirely. Set the `SPECTRA_MODEL` repository variable to override
+SPECTRA's default model.
+
+Run it locally:
+
+```bash
+pip install "spectra-security @ git+https://github.com/d0uble3L/spectra"
+semgrep scan --config auto --json --output semgrep.json alphascanner
+spectra analyze semgrep.json --format both --output reports/code
+```
+
 ## Layout
 
 ```
@@ -406,6 +428,7 @@ alphascanner/
 tests/
 scripts/
   hook_receiver.py  # local webhook receiver for trying out alerts
+  spectra_ci.sh     # CI wrapper: run SPECTRA on scan output, always leave a report
 Dockerfile
 docker-compose.yml
 requirements-lock.txt  # pinned runtime deps used by the Docker build
