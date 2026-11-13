@@ -1,0 +1,165 @@
+name: SPECTRA Security Analysis
+
+# Feeds Semgrep (code) and Trivy (container image) output into SPECTRA, which
+# uses Claude to rank findings, connect attack chains and write remediation.
+# Results land as one sticky PR comment, the run summary, and artifacts.
+#
+# Advisory only: nothing here fails the build. Bandit, pip-audit and the
+# Trivy SARIF upload in ci.yml / container-scan.yml remain the hard gates.
+#
+# Setup: add ANTHROPIC_API_KEY as a repository secret. Optionally set the
+# SPECTRA_MODEL repository variable to override SPECTRA's default model.
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spectra-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned commit of github.com/d0uble3L/spectra; bump deliberately.
+  SPECTRA_REF: 0f1130b7b0a1931e4a9fe93d766ba587371c8bb2
+  SPECTRA_MODEL: ${{ vars.SPECTRA_MODEL }}
+
+jobs:
+  code:
+    name: Semgrep → SPECTRA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep and SPECTRA
+        run: |
+          pip install semgrep
+          pip install "spectra-security @ git+https://github.com/d0uble3L/spectra@${SPECTRA_REF}"
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan --config auto --json --output semgrep.json \
+            --exclude tests --exclude .venv alphascanner scripts Dockerfile || true
+
+      - name: Count findings
+        id: count
+        run: echo "n=$(jq '.results | length' semgrep.json 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
+
+      - name: Analyze with SPECTRA
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: scripts/spectra_ci.sh semgrep.json "${{ steps.count.outputs.n }}" "Code (Semgrep)" reports/code
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: spectra-code
+          path: |
+            semgrep.json
+            reports/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  container:
+    name: Trivy → SPECTRA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install SPECTRA
+        run: pip install "spectra-security @ git+https://github.com/d0uble3L/spectra@${SPECTRA_REF}"
+
+      - name: Build image
+        run: docker build -t alphascanner:${{ github.sha }} .
+
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: alphascanner:${{ github.sha }}
+          format: json
+          output: trivy.json
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: true
+          exit-code: "0"
+
+      - name: Count findings
+        id: count
+        run: echo "n=$(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy.json 2>/dev/null || echo 0)" >> "$GITHUB_OUTPUT"
+
+      - name: Analyze with SPECTRA
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: scripts/spectra_ci.sh trivy.json "${{ steps.count.outputs.n }}" "Container image (Trivy)" reports/container
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: spectra-container
+          path: |
+            trivy.json
+            reports/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  report:
+    name: Publish SPECTRA report
+    needs: [code, container]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: spectra-*
+          merge-multiple: true
+
+      - name: Combine reports
+        run: |
+          {
+            echo "<!-- spectra-report -->"
+            echo "## 🛡️ SPECTRA Security Analysis"
+            echo
+            echo "_Commit ${GITHUB_SHA::7} · advisory, does not block merge_"
+            for part in code container; do
+              echo
+              if [ -f "reports/$part.md" ]; then cat "reports/$part.md"; else echo "### $part"; echo; echo "⚠️ No report: the job failed before SPECTRA ran."; fi
+            done
+          } > spectra-report.md
+          # Run summary limit is 1 MiB; PR comment limit is 65,536 chars.
+          head -c 1000000 spectra-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post or update PR comment
+        if: github.event_name == 'pull_request'
+        continue-on-error: true # fork PRs get a read-only token
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- spectra-report -->';
+            let body = fs.readFileSync('spectra-report.md', 'utf8');
+            const limit = 65000;
+            if (body.length > limit) {
+              const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              body = body.slice(0, limit) + `\n\n…truncated. Full report in the [run summary](${runUrl}).`;
+            }
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(c => c.user.type === 'Bot' && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
