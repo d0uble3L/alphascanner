@@ -13,8 +13,15 @@ WORKDIR /app
 
 COPY pyproject.toml requirements-lock.txt ./
 COPY alphascanner ./alphascanner
-RUN pip install --no-deps -r requirements-lock.txt && \
-    pip install --no-deps .
+# Build with a patched pip, then remove pip from the runtime image: nothing
+# installs packages at runtime, and the base image's pip carries CVEs.
+# `pip check` fails the build if the lock file is missing a dependency
+# (--no-deps would otherwise ship an image that crashes on import).
+RUN pip install --upgrade pip==26.3 && \
+    pip install --no-deps -r requirements-lock.txt && \
+    pip install --no-deps . && \
+    pip check && \
+    pip uninstall -y pip
 
 RUN mkdir -p /data && \
     addgroup -g 1000 appuser && \
