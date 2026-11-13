@@ -4,7 +4,7 @@
 #   python3.12 -m venv /tmp/relock && source /tmp/relock/bin/activate
 #   pip install -e . && pip freeze | grep -v alphascanner > requirements-lock.txt
 Jinja2==3.1.6
-MarkupSafe==3.0.3
+MarkupSafe==3.0.4
 PyYAML==6.0.3
 Pygments==2.21.0
 annotated-doc==0.0.5
